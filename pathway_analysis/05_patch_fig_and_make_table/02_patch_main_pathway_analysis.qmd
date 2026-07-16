@@ -6,10 +6,6 @@ title: "Patch main figure — pathway analysis (Figure 6)"
 
 Compose the main pathway analysis figure (Figure 6): gene upset plot (a), GO term upset plot (b), and function categorization barplot (c) at publication column width.
 
-The dementia progress graph was removed from this composite on 2026-07-11 (it was panel d). Its producer
-`04_function_categorization/03_dementia_progress_graph.qmd` stays live: the standalone
-`.rds` it also writes is now unconsumed.
-
 ```{r}
 #| label: load-packages
 #| echo: false
