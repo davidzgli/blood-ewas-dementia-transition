@@ -216,8 +216,20 @@ quarto render dmp/02_genomic_inflation.qmd --to html
 
 `dmp/genomic_inflation_and_bacon.md` documents the method.
 
-`normal2mci_focused/04_gene_dementia_function.qmd` is likewise standalone. It produces the gene
-dementia-relevance annotation consumed by the Manhattan plot.
+`normal2mci_focused/04_gene_dementia_function.qmd` is likewise standalone, and it is the **one
+manual link in the chain**. It writes
+`normal2mci_focused/output/gene_dmp_dementia_relevance.rds`, and `dmp/01_Manhattan_plot.qmd` reads
+`data/private/gene_dmp_dementia_relevance.rds` — the same table, promoted between the two locations
+**by hand**. No script automates that copy, so `--all` alone will not rebuild the Manhattan plot's
+annotation from scratch. To regenerate it end to end:
+
+```bash
+quarto render normal2mci_focused/04_gene_dementia_function.qmd --to html   # needs data/upon_request/
+cp normal2mci_focused/output/gene_dmp_dementia_relevance.rds data/private/
+bash dmp/render.sh
+```
+
+Otherwise the shipped `data/private/` copy is used as-is.
 
 ## What is not reproducible without permissions
 
