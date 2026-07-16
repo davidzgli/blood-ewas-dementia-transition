@@ -43,6 +43,7 @@ _freeze/
 *.utf8.md
 *.knit.md
 *.typ
+*.rmarkdown
 **/*.quarto_ipynb
 .vdoc.*
 
