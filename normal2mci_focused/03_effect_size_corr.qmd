@@ -1,0 +1,355 @@
+---
+title: "effect size correlation"
+---
+
+
+```{r}
+#| label: load-packages
+#| echo: false
+
+pacman::p_load(rstatix, colorspace, geomtextpath, ggtext, install = FALSE)
+
+```
+
+
+## Introduction
+
+Compute the correlation between effect sizes of different dementia categories at a series of p value cutoffs.
+
+## Load the data
+
+### Correlation data
+
+```{r}
+cor_series <- read_rds(here("data/publicly_available/correlation_among_demcats_various_pval_cutoffs_stable_mci_lump.rds")) |>
+  filter(cor_method == "spearman") |> 
+  rename(pval_cutoff = pval_cutoffs)
+
+glimpse(cor_series)
+```
+
+## Visualize the correlation
+
+### Initialize a list to store the line plots
+
+```{r}
+
+# For main figures
+line_plot_ES_corr_main <- list()
+# For supplementary figures
+line_plot_ES_corr_suppl <- list()
+```
+
+### Altogether
+
+Make line plots for the correlation along p value cutoffs, color the line by the second category, facet by the first category.
+
+
+```{r}
+cor_series |>
+  mutate(pval_cutoff = as.numeric(pval_cutoff)) |> 
+  ggplot(aes(x = pval_cutoff, y = cor, color = demcat2)) +
+  geom_line() +
+  geom_point() +
+  labs(
+    title = "Correlation between categories",
+    x = "P value cutoff",
+    y = "Spearman correlation") +
+  facet_wrap(~demcat1) #+
+  # theme_minimal()
+```
+
+### Make a data preparation function
+
+This function prepares the data for the line plot.
+
+```{r}
+#| output: false
+
+# Create a function to prepare the data for the line plot
+prepare_data_for_line_plot <- function(.data, demcat_base, demcat_other) {
+  .data |>
+    mutate(pval_cutoff = as.numeric(pval_cutoff)) |> 
+    filter(demcat1 %in% c(demcat_base, demcat_other), ! demcat2  %in% c(demcat_base, demcat_other)) |>
+    # Set normal2incid as the first category for demcat2
+    mutate(demcat2 = fct_relevel(demcat2, "prev", "normal2incid", "mci2incid")) |>
+    # Create a group column
+    mutate(line_group = glue("{demcat2} vs. {demcat1}")) |>
+    arrange(demcat2, desc(demcat1)) |>
+    # Set the order of the line_group
+    mutate(line_group = fct_inorder(line_group)) #|> 
+}
+
+# Test the function
+cor_series |>
+  prepare_data_for_line_plot("normal2mci", "prev") |> 
+  count(demcat1, demcat2, line_group) 
+
+```
+
+
+### Make a plotting function
+
+This function makes a line plot with text along the line.
+
+```{r}
+#| output: false
+
+# Make a demcat tibble
+demcat_against <- tibble(
+  demcat = c("<span style='font-size:6pt'> vs. </span> normal2mci", "<span style='font-size:6pt'> vs. </span> prev"),
+  x = c(5, 5),
+  y = c(-0.1, 0.1)
+)
+
+# Create a function to make a line plot with text along the line
+make_line_plot_with_text <- function(.data, path_text_size = 3, demcat_text_size = 8, ...) {
+  .data |>
+    ggplot(aes(x = pval_cutoff, y = cor, color = demcat2, group = line_group)) +
+    geom_point() +
+    # Add text along the line
+    geom_labelpath(
+      aes(label = demcat2, hjust = hjust, vjust = vjust),
+      boxcolor = "white",
+      text_smoothing = 0,
+      size = path_text_size,
+      rich = TRUE
+    ) +
+    # Add a horizontal line at y = 0
+    geom_hline(yintercept = 0, color = "gray", linetype = "dashed") +
+    # Add the demcat_against data
+    geom_richtext(
+      data = demcat_against,
+      aes(label = demcat, x = x, y = y),
+      fill = "#BCD35F",
+      color = "#BCD35F",
+      text.colour = "black",
+      hjust = 0.5, vjust = 0.5, inherit.aes = FALSE, size = demcat_text_size, angle = 0
+    ) +
+    scale_color_discrete_qualitative(palette = "Dark 3") +
+    labs( x = "-log10(p value) cutoff", y = "Spearman correlation") +
+    theme(legend.position = "none")
+}
+
+
+# Test the function
+cor_series |>
+  prepare_data_for_line_plot("normal2mci", "prev") |>
+  # Add two columns for hjust and vjust using case_when based on
+  # the demcat1 and demcat2
+  mutate(hjust = case_when(
+    # normal2incid category
+    demcat2 == "normal2incid" & demcat1 == "normal2mci" ~ 0.1,
+    demcat2 == "normal2incid" & demcat1 == "prev" ~ 0.1,
+    # mci2incid category
+    demcat2 == "mci2incid" & demcat1 == "normal2mci" ~ 0.5,
+    demcat2 == "mci2incid" & demcat1 == "prev" ~ 0.5,
+    # stable_mci category
+    demcat2 == "stable_mci" & demcat1 == "normal2mci" ~ 0.9,
+    demcat2 == "stable_mci" & demcat1 == "prev" ~ 0.9,
+    TRUE ~ 0.5
+  ),
+  vjust = case_when(
+    # normal2incid category
+    demcat2 == "normal2incid" & demcat1 == "normal2mci" ~ 1.8,
+    demcat2 == "normal2incid" & demcat1 == "prev" ~ -0.8,
+    # mci2incid category
+    demcat2 == "mci2incid" & demcat1 == "normal2mci" ~ 1,
+    demcat2 == "mci2incid" & demcat1 == "prev" ~ 1.1,
+    # stable_mci category
+    demcat2 == "stable_mci" & demcat1 == "normal2mci" ~ 0.5,
+    demcat2 == "stable_mci" & demcat1 == "prev" ~ 0.5,
+    TRUE ~ 0.5
+  )) |> 
+  make_line_plot_with_text(path_text_size = 4, demcat_text_size = 8)
+
+```
+
+
+### normal2mci and prev
+
+Make line plots for the correlation along p value cutoffs, color the line by the second category. Use "normal2mic" and "prev" for the first category and represent the second category by different line types.
+
+
+```{r}
+#| label: fig-normal2mci-vs-prev
+#| fig.width: 10
+#| fig.height: 6
+
+demcat_base <- "normal2mci"
+demcat_other <- "prev"
+
+# Make a demcat tibble
+demcat_against <- tibble(
+  demcat = c(glue("<span style='font-size:6pt'> vs. </span> {demcat_base}"), glue("<span style='font-size:6pt'> vs. </span> {demcat_other}")),
+  x = c(5, 5),
+  y = c(-0.1, 0.1)
+)
+
+data_for_normal2mci_vs_prev_plot <-
+  cor_series |>
+  prepare_data_for_line_plot(demcat_base, demcat_other) |>
+  # Add two columns for hjust and vjust using case_when based on
+  # the demcat1 and demcat2
+  mutate(hjust = case_when(
+    # normal2incid category
+    demcat2 == "normal2incid" & demcat1 == demcat_base ~ 0.1,
+    demcat2 == "normal2incid" & demcat1 == demcat_other ~ 0.1,
+    # mci2incid category
+    demcat2 == "mci2incid" & demcat1 == demcat_base ~ 0.5,
+    demcat2 == "mci2incid" & demcat1 == demcat_other ~ 0.5,
+    # stable_mci category
+    demcat2 == "stable_mci" & demcat1 == demcat_base ~ 0.9,
+    demcat2 == "stable_mci" & demcat1 == demcat_other ~ 0.9,
+    TRUE ~ 0.5
+  ),
+  vjust = case_when(
+    # normal2incid category
+    demcat2 == "normal2incid" & demcat1 == demcat_base ~ 1.8,
+    demcat2 == "normal2incid" & demcat1 == demcat_other ~ -0.8,
+    # mci2incid category
+    demcat2 == "mci2incid" & demcat1 == demcat_base ~ 1,
+    demcat2 == "mci2incid" & demcat1 == demcat_other ~ 1.1,
+    # stable_mci category
+    demcat2 == "stable_mci" & demcat1 == demcat_base ~ 0.5,
+    demcat2 == "stable_mci" & demcat1 == demcat_other ~ 0.5,
+    TRUE ~ 0.5
+  ))
+
+
+line_plot_ES_corr_main$normal2mci_vs_prev <-
+  data_for_normal2mci_vs_prev_plot |> 
+  make_line_plot_with_text(path_text_size = 3, demcat_text_size = 3)
+
+line_plot_ES_corr_suppl$normal2mci_vs_prev <-
+  data_for_normal2mci_vs_prev_plot |> 
+  make_line_plot_with_text(path_text_size = 4, demcat_text_size = 6)
+
+line_plot_ES_corr_suppl$normal2mci_vs_prev
+```
+
+### normal2mci and normal2incid
+
+```{r}
+#| label: fig-normal2mci-vs-normal2incid
+#| fig.width: 10
+#| fig.height: 6
+
+demcat_base <- "normal2mci"
+demcat_other <- "normal2incid"
+
+# Make a demcat tibble
+demcat_against <- tibble(
+  demcat = c(glue("<span style='font-size:6pt'> vs. </span> {demcat_base}"), glue("<span style='font-size:6pt'> vs. </span> {demcat_other}")),
+  x = c(5, 5),
+  y = c(-0.1, 0.1)
+)
+
+data_for_normal2mci_vs_normal2incid_plot <-
+  cor_series |>
+  prepare_data_for_line_plot(demcat_base, demcat_other) |>
+  # Add two columns for hjust and vjust using case_when based on
+  # the demcat1 and demcat2
+  mutate(hjust = case_when(
+    # normal2incid category
+    demcat2 == "prev" & demcat1 == demcat_base ~ 0.1,
+    demcat2 == "prev" & demcat1 == demcat_other ~ 0.1,
+    # mci2incid category
+    demcat2 == "mci2incid" & demcat1 == demcat_base ~ 0.5,
+    demcat2 == "mci2incid" & demcat1 == demcat_other ~ 0.5,
+    # stable_mci category
+    demcat2 == "stable_mci" & demcat1 == demcat_base ~ 0.9,
+    demcat2 == "stable_mci" & demcat1 == demcat_other ~ 0.9,
+    TRUE ~ 0.5
+  ),
+  vjust = case_when(
+    # normal2incid category
+    demcat2 == "prev" & demcat1 == demcat_base ~ 1.8,
+    demcat2 == "prev" & demcat1 == demcat_other ~ -0.8,
+    # mci2incid category
+    demcat2 == "mci2incid" & demcat1 == demcat_base ~ 1.1,
+    demcat2 == "mci2incid" & demcat1 == demcat_other ~ 1.1,
+    # stable_mci category
+    demcat2 == "stable_mci" & demcat1 == demcat_base ~ 0.5,
+    demcat2 == "stable_mci" & demcat1 == demcat_other ~ 0.5,
+    TRUE ~ 0.5
+))
+
+line_plot_ES_corr_main$normal2mci_vs_normal2incid <-
+  data_for_normal2mci_vs_normal2incid_plot |> 
+  make_line_plot_with_text(path_text_size = 3, demcat_text_size = 3)
+
+line_plot_ES_corr_suppl$normal2mci_vs_normal2incid <-
+  data_for_normal2mci_vs_normal2incid_plot |> 
+  make_line_plot_with_text(path_text_size = 4, demcat_text_size = 6)
+
+line_plot_ES_corr_suppl$normal2mci_vs_normal2incid
+```
+
+### normal2mci and mci2incid
+
+```{r}
+#| label: fig-normal2mci-vs-mci2incid
+#| fig.width: 10
+#| fig.height: 6
+
+demcat_base <- "normal2mci"
+demcat_other <- "mci2incid"
+
+# Make a demcat tibble
+demcat_against <- tibble(
+  demcat = c(glue("<span style='font-size:6pt'> vs. </span> {demcat_base}"), glue("<span style='font-size:6pt'> vs. </span> {demcat_other}")),
+  x = c(5, 5),
+  y = c(-0.1, 0.1)
+)
+
+data_for_normal2mci_vs_mci2incid_plot <-
+  cor_series |>
+  prepare_data_for_line_plot(demcat_base, demcat_other) |>
+  # Add two columns for hjust and vjust using case_when based on
+  # the demcat1 and demcat2
+  mutate(hjust = case_when(
+    # normal2incid category
+    demcat2 == "prev" & demcat1 == demcat_base ~ 0.1,
+    demcat2 == "prev" & demcat1 == demcat_other ~ 0.1,
+    # mci2incid category
+    demcat2 == "mci2incid" & demcat1 == demcat_base ~ 0.5,
+    demcat2 == "mci2incid" & demcat1 == demcat_other ~ 0.5,
+    # stable_mci category
+    demcat2 == "stable_mci" & demcat1 == demcat_base ~ 0.9,
+    demcat2 == "stable_mci" & demcat1 == demcat_other ~ 0.9,
+    TRUE ~ 0.5
+  ),
+  vjust = case_when(
+    # normal2incid category
+    demcat2 == "prev" & demcat1 == demcat_base ~ 1.8,
+    demcat2 == "prev" & demcat1 == demcat_other ~ -0.8,
+    # mci2incid category
+    demcat2 == "mci2incid" & demcat1 == demcat_base ~ 1,
+    demcat2 == "mci2incid" & demcat1 == demcat_other ~ 1.1,
+    # stable_mci category
+    demcat2 == "stable_mci" & demcat1 == demcat_base ~ 0.5,
+    demcat2 == "stable_mci" & demcat1 == demcat_other ~ 0.5,
+    TRUE ~ 0.5
+  ))  
+
+line_plot_ES_corr_main$normal2mci_vs_mci2incid <-
+  data_for_normal2mci_vs_mci2incid_plot |> 
+  make_line_plot_with_text(path_text_size = 3, demcat_text_size = 3)
+
+line_plot_ES_corr_suppl$normal2mci_vs_mci2incid <-
+  data_for_normal2mci_vs_mci2incid_plot |> 
+  make_line_plot_with_text(path_text_size = 4, demcat_text_size = 6)
+
+line_plot_ES_corr_suppl$normal2mci_vs_mci2incid
+```
+
+### Save the line plots
+
+```{r}
+#| output: false
+
+fs::dir_create(here("normal2mci_focused/output"))
+write_rds(line_plot_ES_corr_main, here("normal2mci_focused/output/line_plot_ES_corr_main.rds"))
+write_rds(line_plot_ES_corr_suppl, here("normal2mci_focused/output/line_plot_ES_corr_suppl.rds"))
+```

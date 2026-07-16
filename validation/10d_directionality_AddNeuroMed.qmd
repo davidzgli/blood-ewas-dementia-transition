@@ -1,0 +1,291 @@
+---
+title: "Directionality Assessment: AGES vs AddNeuroMed Study"
+params:
+  quartile_cutoff: 0.95
+---
+
+## Overview
+
+This analysis assesses whether DNA methylation effect directions are consistent between AGES and the AddNeuroMed cohort using binomial sign tests to evaluate concordance significance.
+
+```{r}
+#| label: load-packages
+#| echo: false
+
+# Additional packages (tidyverse, here, janitor, glue loaded via .Rprofile)
+pacman::p_load(scales, ggtext, install = FALSE)
+
+conflicted::conflict_prefer_all("dplyr", quiet = TRUE)
+
+source(here("custom_func/display_scientific_notation.R"))
+```
+
+```{r}
+#| label: load-data
+
+es_long_filtered <- read_rds(here("validation/output/es_long_filtered_AddNeuroMed.rds"))
+```
+
+```{r}
+#| label: apply-quartile-filter
+
+# Apply quartile filtering per sub-dataset (addneuromed_comparison + ages_trajectory)
+if (params$quartile_cutoff < 1) {
+  lower_q <- (1 - params$quartile_cutoff) / 2
+  upper_q <- 1 - lower_q
+
+  es_long_filtered <- es_long_filtered |>
+    mutate(
+      x_lower = quantile(ages_effect_size, lower_q, na.rm = TRUE),
+      x_upper = quantile(ages_effect_size, upper_q, na.rm = TRUE),
+      y_lower = quantile(addneuromed_effect_size, lower_q, na.rm = TRUE),
+      y_upper = quantile(addneuromed_effect_size, upper_q, na.rm = TRUE),
+      .by = c(addneuromed_comparison, ages_trajectory)
+    ) |>
+    filter(
+      ages_effect_size >= x_lower & ages_effect_size <= x_upper,
+      addneuromed_effect_size >= y_lower & addneuromed_effect_size <= y_upper
+    ) |>
+    select(-x_lower, -x_upper, -y_lower, -y_upper)
+}
+```
+
+The scatter plots in the main comparison document show that several CpGs have opposing effect directions between AGES and AddNeuroMed. To formally assess whether effect directions are more concordant than expected by chance, we perform binomial sign tests.
+
+**Analysis parameters:** Quartile cutoff = `r params$quartile_cutoff`
+
+## Prepare Directionality Data
+
+```{r}
+#| label: prepare-directionality-data
+
+directionality_data <- es_long_filtered |>
+  mutate(
+    ages_direction = sign(ages_effect_size),
+    addneuromed_direction = sign(addneuromed_effect_size),
+    concordant = ages_direction == addneuromed_direction &
+                 ages_direction != 0 & addneuromed_direction != 0
+  ) |>
+  summarise(
+    n_total = n(),
+    n_concordant = sum(concordant, na.rm = TRUE),
+    n_discordant = n_total - n_concordant,
+    prop_concordant = n_concordant / n_total,
+    .by = c(addneuromed_comparison, ages_trajectory)
+  )
+```
+
+## Binomial Sign Test
+
+For each AddNeuroMed comparison and AGES trajectory combination, we test whether the proportion of CpGs with concordant effect directions (both positive or both negative) is significantly greater than 50% (what would be expected by chance).
+
+```{r}
+#| label: binomial-sign-test
+
+# Perform binomial sign test for each comparison x trajectory combination
+binomial_results <- directionality_data |>
+  rowwise() |>
+  mutate(
+    binom_test = list(binom.test(n_concordant, n_total, p = 0.5, alternative = "greater")),
+    ci_lower = binom_test$conf.int[1],
+    ci_upper = binom_test$conf.int[2],
+    binom_pval = binom_test$p.value
+  ) |>
+  ungroup() |>
+  select(-binom_test) |>
+  mutate(
+    ages_trajectory = fct_relevel(ages_trajectory, "prev", "mci2incid", "normal2incid", "stable_mci", "normal2mci"),
+    significance = case_when(
+      binom_pval < 0.001 ~ "***",
+      binom_pval < 0.01 ~ "**",
+      binom_pval < 0.05 ~ "*",
+      TRUE ~ ""
+    )
+  )
+
+# Display summary table
+binomial_results |>
+  select(
+    addneuromed_comparison, ages_trajectory, n_total, n_concordant, n_discordant,
+    prop_concordant, ci_lower, ci_upper, binom_pval, significance
+  ) |>
+  arrange(addneuromed_comparison, ages_trajectory) |>
+  mutate(
+    prop_concordant = scales::percent(prop_concordant, accuracy = 0.1),
+    ci_95 = glue("{scales::percent(ci_lower, accuracy = 0.1)} - {scales::percent(ci_upper, accuracy = 0.1)}"),
+    binom_pval = display_scientific_notation(binom_pval)
+  ) |>
+  select(-ci_lower, -ci_upper) |>
+  knitr::kable(
+    col.names = c(
+      "AddNeuroMed Comparison", "AGES Trajectory", "N Total", "N Concordant",
+      "N Discordant", "% Concordant", "P-value", "Sig.", "95% CI"
+    ),
+    caption = "Binomial sign test results for effect direction concordance between AGES and AddNeuroMed"
+  )
+```
+
+## Interpretation
+
+A significant p-value (< 0.05) indicates that the proportion of CpGs with concordant effect directions is significantly greater than 50%, providing evidence that the AGES and AddNeuroMed studies show consistent effect directions beyond what would be expected by chance.
+
+## Directionality Heatmap
+
+```{r}
+#| label: fig-directionality-heatmap
+#| fig-width: 10
+#| fig-height: 6
+
+# Create heatmap of concordance proportions
+directionality_plot <- binomial_results |>
+  mutate(
+    sig_label = glue("{scales::percent(prop_concordant, accuracy = 1)}{significance}")
+  ) |>
+  ggplot(aes(x = ages_trajectory, y = addneuromed_comparison, fill = prop_concordant)) +
+  geom_tile(color = "white", linewidth = 0.5) +
+  geom_text(aes(label = sig_label), size = 3.5) +
+  scale_fill_gradient2(
+    low = "#d73027",
+    mid = "#ffffbf",
+    high = "#1a9850",
+    midpoint = 0.5,
+    limits = c(0, 1),
+    labels = scales::percent
+  ) +
+  scale_x_discrete(labels = c(
+    "prev" = "Prevalent",
+    "mci2incid" = "MCI->Incident",
+    "normal2incid" = "Normal->Incident",
+    "stable_mci" = "Stable MCI",
+    "normal2mci" = "Normal->MCI"
+  )) +
+  labs(
+    x = "AGES Dementia Trajectory",
+    y = "AddNeuroMed Diagnostic Comparison",
+    fill = "Proportion\nConcordant",
+    title = "Effect Direction Concordance: AGES vs AddNeuroMed",
+    subtitle = "Binomial sign test (* p<0.05, ** p<0.01, *** p<0.001)"
+  ) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    panel.grid = element_blank(),
+    plot.title = element_text(size = 14, face = "bold")
+  )
+
+print(directionality_plot)
+```
+
+## Directionality Barplot
+
+```{r}
+#| label: fig-directionality-barplot
+#| fig-cap: "Significance of effect direction concordance between AGES and AddNeuroMed"
+#| fig-width: 7
+#| fig-height: 5
+
+# Filter to requested trajectories and comparisons
+barplot_data <- binomial_results |>
+  filter(
+    ages_trajectory %in% c("normal2incid", "mci2incid", "prev"),
+    addneuromed_comparison %in% c("AD vs CN", "MCI vs CN")
+  ) |>
+  mutate(
+    neg_log10_p = -log10(binom_pval),
+    ages_trajectory = fct_relevel(ages_trajectory, "normal2incid", "mci2incid", "prev"),
+    # Rename comparison for legend
+    comparison_label = case_match(
+      addneuromed_comparison,
+      "AD vs CN" ~ "AD",
+      "MCI vs CN" ~ "MCI"
+    )
+  )
+
+# Create dodged barplot
+directionality_barplot <- barplot_data |>
+  ggplot(aes(x = ages_trajectory, y = neg_log10_p, fill = comparison_label)) +
+  geom_col(position = position_dodge(width = 0.8), width = 0.7) +
+  geom_hline(yintercept = -log10(0.05), linetype = "dashed", color = "gray50") +
+  annotate("text", x = 0.5, y = -log10(0.01) + 0.3,
+           label = "italic(P) == 0.05", hjust = 0, size = 3, color = "gray30", parse = TRUE) +
+  scale_fill_brewer(palette = "Dark2") +
+  labs(
+    x = NULL,
+    y = "-log<sub>10</sub>(Binomial Test <i>P</i>-value)",
+    fill = "AddNeuroMed"
+  ) +
+  theme(
+    legend.position = c(0.15, 0.8),
+    legend.title = element_text(face = "bold"),
+    axis.title.y = element_markdown(size = 11),
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor = element_blank()
+  )
+
+directionality_barplot
+```
+
+```{r}
+#| label: save-barplot
+#| echo: false
+
+ggsave(
+  here("validation", "output", "fig_directionality_barplot_AddNeuroMed.png"),
+  directionality_barplot,
+  width = 7, height = 5, dpi = 300,
+  device = ragg::agg_png
+)
+
+write_rds(
+  directionality_barplot,
+  here("validation", "output", "fig_directionality_barplot_AddNeuroMed.rds")
+)
+```
+
+## Summary Statistics
+
+```{r}
+#| label: directionality-summary
+
+# Overall summary across all comparisons
+overall_summary <- binomial_results |>
+  summarise(
+    mean_concordance = mean(prop_concordant),
+    min_concordance = min(prop_concordant),
+    max_concordance = max(prop_concordant),
+    n_significant = sum(binom_pval < 0.05),
+    n_total_tests = n(),
+    .by = addneuromed_comparison
+  )
+
+overall_summary |>
+  mutate(
+    across(c(mean_concordance, min_concordance, max_concordance), ~scales::percent(., accuracy = 0.1))
+  ) |>
+  knitr::kable(
+    col.names = c(
+      "AddNeuroMed Comparison", "Mean Concordance", "Min Concordance",
+      "Max Concordance", "N Significant Tests", "N Total Tests"
+    ),
+    caption = "Summary of effect direction concordance across AGES trajectories"
+  )
+```
+
+## Export Figures
+
+```{r}
+#| label: save-figures
+
+# Save directionality heatmap (png and rds)
+ggsave(
+  here("validation/output/fig_directionality_heatmap_AddNeuroMed.png"),
+  directionality_plot,
+  width = 10,
+  height = 6,
+  dpi = 300,
+  bg = "white",
+  device = ragg::agg_png
+)
+write_rds(directionality_plot, here("validation/output/fig_directionality_heatmap_AddNeuroMed.rds"))
+
+message("Figures saved to validation/output/")
+```

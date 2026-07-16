@@ -1,0 +1,114 @@
+---
+title: "Analyze Biological Function Categorization"
+subtitle: "Top `r params$top_n` condition-specific GO terms"
+params:
+  top_n: 1000
+---
+
+## Overview
+
+Visualizes the distribution of automated biological function categories across dementia transition conditions for the top `r params$top_n` condition-specific GO terms.
+
+## Load packages
+
+```{r}
+#| label: load-packages
+#| message: false
+
+pacman::p_load(readxl, install = FALSE)
+
+conflicted::conflict_prefer_all("dplyr", quiet = TRUE)
+```
+
+## Load the data
+
+```{r}
+#| label: load-data
+#| message: false
+
+function_categorization <- read_excel(
+  here(glue("pathway_analysis/04_function_categorization/output/top{params$top_n}_condition_specific_GO_terms_auto_cat.xlsx"))
+) |>
+  filter(!is.na(function_category)) |>
+  mutate(condition = fct_relevel(condition, "normal2mci", "stable_mci", "normal2incid", "mci2incid", "prev"))
+
+glue("Loaded {nrow(function_categorization)} categorized GO terms (NA categories removed)")
+```
+
+## Barplot of the number of terms in function categories
+
+### Count the number of terms in each function category
+
+```{r}
+#| label: count-biofunc
+
+function_categorization_count <- function_categorization |>
+  count(condition, function_category) |>
+  group_by(function_category) |>
+  mutate(percentage = n / sum(n))
+```
+
+### Order function_category by percentage
+
+```{r}
+#| label: order-biofunc
+
+function_categorization_ordered <-
+  function_categorization_count |>
+  ungroup() |>
+  select(function_category, condition, percentage, n) |>
+  pivot_wider(names_from = condition, values_from = c(percentage, n)) |>
+  arrange(desc(percentage_normal2mci), desc(percentage_stable_mci), desc(percentage_normal2incid), desc(percentage_mci2incid), desc(percentage_prev), desc(n_normal2mci), desc(n_stable_mci), desc(n_normal2incid), desc(n_mci2incid), desc(n_prev)) |>
+  pull(function_category)
+```
+
+### Assign the ordered function_category
+
+```{r}
+#| label: assign-ordered-biofunc
+
+function_categorization_count_ordered <- function_categorization_count |>
+  mutate(function_category = factor(function_category, levels = rev(function_categorization_ordered)))
+```
+
+### All function categories
+
+```{r}
+#| label: barplot-all
+#| fig-width: 12
+#| fig-height: 8
+
+function_categorization_count_ordered |>
+  ggplot(aes(x = percentage, y = function_category)) +
+  geom_col() +
+  geom_text(aes(label = n), vjust = 0.5, hjust = -0.2, size = 8 / .pt) +
+  scale_x_continuous(expand = expansion(mult = c(0, 0.18)), labels = scales::percent) +
+  facet_wrap(~ condition, nrow = 1, scales = "free_x")
+```
+
+### Function categories with more than one term
+
+```{r}
+#| label: barplot-gt1
+#| fig-width: 12
+#| fig-height: 8
+
+barplot_function_category <- function_categorization_count_ordered |>
+  filter(n > 1) |>
+  ggplot(aes(x = percentage, y = function_category)) +
+  geom_col() +
+  geom_text(aes(label = n), vjust = 0.5, hjust = -0.2, size = 8 / .pt) +
+  scale_x_continuous(expand = expansion(mult = c(0, 0.18)), labels = scales::percent) +
+  facet_wrap(~ condition, nrow = 1, scales = "free_x")
+
+barplot_function_category
+```
+
+## Save the plots
+
+```{r}
+#| label: save-plots
+
+fs::dir_create(here("pathway_analysis/04_function_categorization/output"))
+write_rds(barplot_function_category, here(glue("pathway_analysis/04_function_categorization/output/top{params$top_n}_barplot_function_category.rds")))
+```

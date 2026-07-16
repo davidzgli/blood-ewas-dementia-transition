@@ -1,0 +1,99 @@
+---
+title: "Patch supplementary figures — stable MCI effect size scatter"
+---
+
+## Overview
+
+Apply publication theming to the two stable-MCI effect-size scatter plots and save each as a high-resolution PNG for the supplementary figures.
+
+```{r}
+#| label: load-packages
+#| echo: false
+
+pacman::p_load(patchwork, ggtext, install = FALSE)
+```
+
+```{r}
+#| label: setup-theme
+
+source(here("custom_func/theme_main_fig.R"))
+```
+
+The correlation labels in these plots are already authored at `size = 6 / .pt` (6 pt, the journal
+minimum), so `rescale_layer_params()` is deliberately not applied here — it would shrink them below
+legibility. `theme_main_fig()` supplies the publication typography instead, and its textbox strip
+elements render the HTML site counts in the extended-DMP facet labels.
+
+## Load RDS plots
+
+```{r}
+#| label: load-rds
+
+scatter_DMP <- read_rds(here("stable_mci_focused/output/scatter_DMP.rds"))
+scatter_extended <- read_rds(here("stable_mci_focused/output/scatter_extended.rds"))
+```
+
+## Effect size comparison between stable_mci and other transitions for DMPs
+
+```{r}
+#| label: fig-sup-stable-mci-DMP
+fs::dir_create(here("stable_mci_focused/patch_figures/output"))
+
+fig_sup_stable_mci_DMP <- scatter_DMP +
+  theme_main_fig() +
+  theme(legend.position = "top")
+
+ggsave(here("stable_mci_focused/patch_figures/output/fig_sup_stable_mci_DMP.png"),
+       fig_sup_stable_mci_DMP,
+       width = 6.5, height = 6.0, dpi = 600, bg = "white",
+       device = grDevices::png)
+```
+
+## Effect size association between stable_mci and prevalent dementia for extended DMPs
+
+```{r}
+#| label: fig-sup-stable-mci-extended-prev
+
+fig_sup_stable_mci_extended_prev <- scatter_extended$prev +
+  theme_main_fig() +
+  theme(legend.position = "top")
+
+ggsave(here("stable_mci_focused/patch_figures/output/fig_sup_stable_mci_extended_prev.png"),
+       fig_sup_stable_mci_extended_prev,
+       width = 6.5, height = 3.4, dpi = 600, bg = "white",
+       device = grDevices::png)
+```
+
+## Effect size association between stable_mci and the other transitions for extended DMPs
+
+Stack the three remaining comparisons, keeping a single legend on the top panel.
+
+```{r}
+#| label: fig-sup-stable-mci-extended-transitions
+
+fig_sup_stable_mci_extended_transitions <-
+  (scatter_extended$normal2incid + theme_main_fig() + theme(legend.position = "top")) +
+  (scatter_extended$mci2incid + theme_main_fig() + theme(legend.position = "none")) +
+  (scatter_extended$normal2mci + theme_main_fig() + theme(legend.position = "none")) +
+  plot_layout(ncol = 1, guides = "keep", axes = "keep", axis_titles = "collect") +
+  plot_annotation(tag_levels = "a")
+
+ggsave(here("stable_mci_focused/patch_figures/output/fig_sup_stable_mci_extended_transitions.png"),
+       fig_sup_stable_mci_extended_transitions,
+       width = 6.5, height = 8.5, dpi = 600, bg = "white",
+       device = grDevices::png)
+```
+
+## Verify output
+
+```{r}
+#| label: verify-output
+
+output_files <- fs::dir_ls(
+  here("stable_mci_focused/patch_figures/output"),
+  glob = "*sup*"
+)
+fs::file_info(output_files) |>
+  select(path, size, modification_time) |>
+  mutate(path = basename(path))
+```

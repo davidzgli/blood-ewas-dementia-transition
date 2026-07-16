@@ -1,0 +1,446 @@
+---
+title: "VAE Embedding (Lite)"
+subtitle: "Single configuration (beta=0.001), average ensemble, thresholds 7 & 8"
+---
+
+## Overview
+
+Train a 6-dimensional regularized VAE with beta=0.001 using 5-fold stratified cross-validation for thresholds 7 and 8, then compute average ensemble coordinates across folds.
+
+## Configuration
+
+```{r}
+#| label: config
+
+LATENT_DIM <- 6
+N_FOLDS <- 5
+BATCH_SIZE <- 256
+EPOCHS <- 150
+PATIENCE <- 40
+BETA <- 0.001
+THRESHOLDS <- c(7, 8)
+```
+
+## Setup
+
+### Python Environment
+
+Select the Python environment that provides keras3 and TensorFlow. The environment is not
+hard-coded: set `VAE_VIRTUALENV` or `RETICULATE_PYTHON` to point at your own.
+
+```{r}
+#| label: python-setup
+
+Sys.setenv(TF_ENABLE_ONEDNN_OPTS = "0")
+Sys.setenv(TF_FORCE_GPU_ALLOW_GROWTH = "true")
+
+library(reticulate)
+
+# Resolution order, first match wins:
+#   1. VAE_VIRTUALENV    name or path of a virtualenv (this project's knob)
+#   2. RETICULATE_PYTHON path to a python binary (reticulate honours this itself)
+#   3. reticulate's default discovery
+# Set one in your shell or in a local .Renviron. requirements.txt pins the
+# versions this analysis was run with.
+vae_virtualenv <- Sys.getenv("VAE_VIRTUALENV", unset = "")
+
+if (nzchar(vae_virtualenv)) {
+
+  if (!virtualenv_exists(vae_virtualenv)) {
+    stop(
+      "VAE_VIRTUALENV is set to '", vae_virtualenv, "' but no virtualenv is there.\n",
+      "  Create it:  python3 -m venv ", vae_virtualenv, "\n",
+      "              ", vae_virtualenv, "/bin/pip install -r requirements.txt\n",
+      "  Or unset VAE_VIRTUALENV and set RETICULATE_PYTHON to a python that\n",
+      "  already provides tensorflow.",
+      call. = FALSE
+    )
+  }
+  use_virtualenv(vae_virtualenv, required = TRUE)
+
+} else if (!nzchar(Sys.getenv("RETICULATE_PYTHON"))) {
+
+  message(
+    "Neither VAE_VIRTUALENV nor RETICULATE_PYTHON is set; using reticulate's\n",
+    "default Python discovery. If this selects the wrong interpreter, set\n",
+    "VAE_VIRTUALENV to a virtualenv built from requirements.txt."
+  )
+
+}
+```
+
+```{r}
+#| label: check-python
+
+pacman::p_load(keras3, tensorflow, install = FALSE)
+
+if (!py_module_available("tensorflow")) {
+  python_config <- py_config()
+  stop(
+    "TensorFlow is not available in the active Python environment.\n",
+    "  python : ", python_config$python, "\n",
+    "  version: ", python_config$version, "\n",
+    "Install it with:  pip install -r requirements.txt",
+    call. = FALSE
+  )
+}
+```
+
+```{r}
+#| label: check-gpu
+
+gpu_devices <- tf$config$list_physical_devices('GPU')
+gpu_available <- length(gpu_devices) > 0
+```
+
+**Environment:**
+
+- **Python:** `r py_config()$python`
+- **TensorFlow:** `r as.character(tf_version())`
+- **GPU available:** `r ifelse(gpu_available, "Yes", "No")`
+- **Device:** `r if(gpu_available) gpu_devices[[1]]$name else "CPU only"`
+
+::: {.callout-warning}
+The published latent coordinates were produced on a CUDA 12 GPU with TensorFlow 2.20.0.
+Fixed seeds plus `enable_op_determinism()` make a re-run on the same hardware reproduce the
+fit bit-for-bit, but a CPU run or a different GPU/CUDA/TensorFlow build yields a different
+basis: the same trajectory structure on rotated axes. Latent dimension indices are not
+comparable across training runs.
+:::
+
+### Load Packages
+
+```{r}
+#| label: load-packages
+#| echo: false
+
+pacman::p_load(
+  rsample,
+  install = FALSE
+)
+
+conflicted::conflict_prefer_all("dplyr", quiet = TRUE)
+conflicted::conflicts_prefer(keras3::shape)
+```
+
+### Enable Deterministic Operations
+
+```{r}
+#| label: deterministic-ops
+
+tf$config$experimental$enable_op_determinism()
+```
+
+### Set Seeds
+
+```{r}
+#| label: set-seeds
+
+set.seed(123)
+tensorflow::set_random_seed(123)
+tf$random$set_seed(123)
+```
+
+### Create Output Directory
+
+```{r}
+#| label: create-output-dir
+
+output_dir <- here("VAE/lite/output")
+fs::dir_create(output_dir)
+```
+
+## Load Data
+
+```{r}
+#| label: load-data
+
+load_threshold_data <- function(threshold) {
+  file_path <- here(glue(
+    "data/collaborator_only/adjusted_meth/adjusted_methylation_scaled_nlog10p_gte_{threshold}.rds"
+  ))
+
+  data <- read_rds(file_path)
+
+  meth_matrix <- data |>
+    select(starts_with("cg")) |>
+    as.matrix()
+
+  list(
+    matrix = meth_matrix,
+    demcat = data$demcat,
+    subject_id = data$subject_id,
+    n_subjects = nrow(meth_matrix),
+    n_features = ncol(meth_matrix),
+    threshold = threshold
+  )
+}
+
+datasets <- map(THRESHOLDS, load_threshold_data) |>
+  set_names(glue("threshold_{THRESHOLDS}"))
+
+walk2(names(datasets), datasets, \(nm, ds) {
+  message(glue("{nm}: {ds$n_subjects} subjects, {ds$n_features} features"))
+})
+```
+
+## VAE Architecture
+
+```{r}
+#| label: define-vae-model
+
+create_improved_regularized_vae <- function(input_dim, latent_dim = 6, beta = 0.001) {
+
+  # Sampling layer for reparameterization trick
+  sampling_layer <- new_layer_class(
+    classname = "Sampling",
+    call = function(inputs, mask = NULL) {
+      z_mean <- inputs[[1]]
+      z_log_var <- inputs[[2]]
+      batch_size <- op_shape(z_mean)[1]
+      dim <- op_shape(z_mean)[2]
+      epsilon <- random_normal(shape = c(batch_size, dim), dtype = "float32")
+      z_mean + op_exp(0.5 * z_log_var) * epsilon
+    }
+  )
+
+  # Encoder: Input -> 512 -> 256 -> 128 -> 64 -> (z_mean, z_log_var)
+  encoder_input <- layer_input(shape = input_dim, name = "encoder_input")
+
+  h <- encoder_input |>
+    layer_dense(units = 512, name = "encoder_dense1") |>
+    layer_batch_normalization(name = "encoder_bn1") |>
+    layer_activation("relu", name = "encoder_relu1") |>
+    layer_dropout(rate = 0.05, name = "encoder_dropout1") |>
+    layer_dense(units = 256, name = "encoder_dense2") |>
+    layer_batch_normalization(name = "encoder_bn2") |>
+    layer_activation("relu", name = "encoder_relu2") |>
+    layer_dropout(rate = 0.05, name = "encoder_dropout2") |>
+    layer_dense(units = 128, name = "encoder_dense3") |>
+    layer_batch_normalization(name = "encoder_bn3") |>
+    layer_activation("relu", name = "encoder_relu3") |>
+    layer_dropout(rate = 0.05, name = "encoder_dropout3") |>
+    layer_dense(units = 64, name = "encoder_dense4") |>
+    layer_batch_normalization(name = "encoder_bn4") |>
+    layer_activation("relu", name = "encoder_relu4") |>
+    layer_dropout(rate = 0.1, name = "encoder_dropout4")
+
+  z_mean <- h |> layer_dense(units = latent_dim, name = "z_mean")
+  z_log_var <- h |> layer_dense(units = latent_dim, name = "z_log_var")
+
+  encoder_model <- keras_model(
+    inputs = encoder_input,
+    outputs = list(z_mean, z_log_var),
+    name = "encoder"
+  )
+
+  # Decoder: 6D latent -> 64 -> 128 -> 256 -> 512 -> Output
+  decoder_input <- layer_input(shape = latent_dim, name = "decoder_input")
+
+  decoder_output <- decoder_input |>
+    layer_dense(units = 64, name = "decoder_dense1") |>
+    layer_batch_normalization(name = "decoder_bn1") |>
+    layer_activation("relu", name = "decoder_relu1") |>
+    layer_dropout(rate = 0.1, name = "decoder_dropout1") |>
+    layer_dense(units = 128, name = "decoder_dense2") |>
+    layer_batch_normalization(name = "decoder_bn2") |>
+    layer_activation("relu", name = "decoder_relu2") |>
+    layer_dropout(rate = 0.05, name = "decoder_dropout2") |>
+    layer_dense(units = 256, name = "decoder_dense3") |>
+    layer_batch_normalization(name = "decoder_bn3") |>
+    layer_activation("relu", name = "decoder_relu3") |>
+    layer_dropout(rate = 0.05, name = "decoder_dropout3") |>
+    layer_dense(units = 512, name = "decoder_dense4") |>
+    layer_batch_normalization(name = "decoder_bn4") |>
+    layer_activation("relu", name = "decoder_relu4") |>
+    layer_dropout(rate = 0.05, name = "decoder_dropout4") |>
+    layer_dense(units = input_dim, activation = "linear", name = "output_layer")
+
+  decoder_model <- keras_model(
+    inputs = decoder_input,
+    outputs = decoder_output,
+    name = "decoder"
+  )
+
+  # VAE model class with custom loss
+  vae_class <- new_model_class(
+    classname = "ImprovedRegularizedVAE",
+    initialize = function(encoder, decoder, beta = 0.001, ...) {
+      super$initialize(...)
+      self$encoder <- encoder
+      self$decoder <- decoder
+      self$beta <- beta
+    },
+
+    call = function(inputs, training = NULL, mask = NULL) {
+      encoder_output <- self$encoder(inputs)
+      z_mean <- encoder_output[[1]]
+      z_log_var <- encoder_output[[2]]
+      z <- sampling_layer(list(z_mean, z_log_var))
+      reconstruction <- self$decoder(z)
+
+      kl_loss <- -0.5 * op_mean(
+        op_sum(1 + z_log_var - op_square(z_mean) - op_exp(z_log_var), axis = 1L)
+      )
+      self$add_loss(self$beta * kl_loss)
+
+      reconstruction
+    }
+  )
+
+  vae <- vae_class(encoder = encoder_model, decoder = decoder_model, beta = beta)
+
+  vae$build(shape(NULL, input_dim))
+  vae |>
+    compile(
+      optimizer = optimizer_adam(learning_rate = 0.001),
+      loss = loss_mean_squared_error(),
+      metrics = list(metric_mean_squared_error())
+    )
+
+  list(
+    vae = vae,
+    encoder = encoder_model,
+    decoder = decoder_model,
+    beta = beta
+  )
+}
+```
+
+## Cross-Validation Training
+
+```{r}
+#| label: define-training-function
+
+train_vae_cv <- function(data, beta, n_folds = 5, batch_size = 256, epochs = 150, patience = 40) {
+
+  meth_matrix <- data$matrix
+  demcat <- data$demcat
+
+  set.seed(123)
+  cv_splits <- vfold_cv(
+    tibble(idx = 1:nrow(meth_matrix), demcat = demcat),
+    v = n_folds,
+    strata = demcat
+  )
+
+  cv_results <- list()
+
+  for (fold_idx in 1:n_folds) {
+    tensorflow::set_random_seed(123 + fold_idx)
+
+    fold_split <- cv_splits$splits[[fold_idx]]
+    train_idx <- as.integer(fold_split, data = "analysis")
+    test_idx <- as.integer(fold_split, data = "assessment")
+
+    x_train <- meth_matrix[train_idx, , drop = FALSE]
+    x_test <- meth_matrix[test_idx, , drop = FALSE]
+
+    vae_models <- create_improved_regularized_vae(
+      input_dim = ncol(meth_matrix),
+      latent_dim = LATENT_DIM,
+      beta = beta
+    )
+
+    callbacks <- list(
+      callback_early_stopping(
+        monitor = "val_loss",
+        patience = patience,
+        restore_best_weights = TRUE,
+        verbose = 0
+      ),
+      callback_reduce_lr_on_plateau(
+        monitor = "val_loss",
+        patience = 20,
+        factor = 0.5,
+        min_lr = 1e-5,
+        verbose = 0
+      )
+    )
+
+    history <- vae_models$vae |>
+      fit(
+        x = x_train,
+        y = x_train,
+        epochs = epochs,
+        batch_size = batch_size,
+        validation_data = list(x_test, x_test),
+        callbacks = callbacks,
+        verbose = 0
+      )
+
+    # Get latent representations (z_mean)
+    encoder_output <- vae_models$encoder(tf$constant(meth_matrix, dtype = "float32"))
+    z_mean <- as.matrix(encoder_output[[1]])
+
+    latent_coords <- as_tibble(z_mean) |>
+      set_names(paste0("dim", 1:LATENT_DIM)) |>
+      mutate(
+        subject_id = data$subject_id,
+        demcat = demcat,
+        fold = fold_idx
+      )
+
+    cv_results[[fold_idx]] <- list(
+      fold = fold_idx,
+      latent_coords = latent_coords
+    )
+  }
+
+  cv_results
+}
+```
+
+### Train and Save
+
+```{r}
+#| label: train-and-save
+
+for (threshold in THRESHOLDS) {
+  threshold_name <- glue("threshold_{threshold}")
+  data <- datasets[[threshold_name]]
+
+  tictoc::tic(glue("Training VAE: Threshold {threshold}, Beta = {BETA}"))
+
+  cv_results <- train_vae_cv(
+    data = data,
+    beta = BETA,
+    n_folds = N_FOLDS,
+    batch_size = BATCH_SIZE,
+    epochs = EPOCHS,
+    patience = PATIENCE
+  )
+
+  tictoc::toc()
+
+  # Average ensemble: mean of latent coords across folds
+  all_coords <- map_dfr(cv_results, "latent_coords")
+
+  embedding <- all_coords |>
+    summarise(
+      across(starts_with("dim"), mean),
+      .by = c(subject_id, demcat)
+    ) |>
+    rename_with(\(x) str_replace(x, "^dim", "vae_"), starts_with("dim"))
+
+  write_rds(
+    embedding,
+    here(output_dir, glue("embedding_threshold_{threshold}.rds"))
+  )
+
+  message(glue("Saved: embedding_threshold_{threshold}.rds ({nrow(embedding)} subjects)"))
+}
+```
+
+## Verify Outputs
+
+```{r}
+#| label: verify
+
+walk(THRESHOLDS, \(threshold) {
+  emb <- read_rds(here(output_dir, glue("embedding_threshold_{threshold}.rds")))
+  message(glue("Threshold {threshold}: {nrow(emb)} rows, {ncol(emb)} cols"))
+  message(glue("  Columns: {paste(names(emb), collapse = ', ')}"))
+  message(glue("  Demcat levels: {paste(unique(emb$demcat), collapse = ', ')}"))
+})
+```

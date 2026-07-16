@@ -1,0 +1,122 @@
+---
+title: "Patch supplementary figures — normal2mci scatter & ES correlation"
+---
+
+## Overview
+
+Apply publication theming to the supplementary normal-to-MCI scatter plots and effect-size correlation panel, and save each as a high-resolution PNG.
+
+```{r}
+#| label: load-packages
+#| echo: false
+
+pacman::p_load(patchwork, ggtext, install = FALSE)
+```
+
+```{r}
+#| label: setup-theme
+
+source(here("custom_func/theme_main_fig.R"))
+set_pub_geom_defaults()
+```
+
+## Load RDS plots
+
+```{r}
+#| label: load-rds
+
+sct_DMP_suppl <- read_rds(here("normal2mci_focused/output/scatter_DMP_suppl.rds"))
+sct_extended_DMP_suppl <- read_rds(here("normal2mci_focused/output/scatter_extended_DMP_suppl.rds"))
+line_plot_ES_corr_suppl <- read_rds(here("normal2mci_focused/output/line_plot_ES_corr_suppl.rds"))
+```
+
+## Effect size comparison with normal2incid for DMPs
+
+```{r}
+#| label: fig-sup-normal2incid-DMP
+
+sct_DMP_suppl$normal2incid <- rescale_layer_params(
+  sct_DMP_suppl$normal2incid, size_scale = 0.6, linewidth_scale = 0.6
+)
+
+ggsave(here("normal2mci_focused/patch_figures/output/fig_sup_normal2incid_DMP.png"),
+       sct_DMP_suppl$normal2incid,
+       width = 6.5, height = 4.9, dpi = 600, bg = "white",
+       device = grDevices::png)
+```
+
+## Effect size comparison with normal2incid for extended DMPs
+
+```{r}
+#| label: fig-sup-normal2incid-extended-DMP
+
+sct_extended_DMP_suppl$mci2incid_vs_normal2incid <- rescale_layer_params(
+  sct_extended_DMP_suppl$mci2incid_vs_normal2incid, size_scale = 0.6, linewidth_scale = 0.6
+)
+sct_extended_DMP_suppl$normal2mci_vs_normal2incid <- rescale_layer_params(
+  sct_extended_DMP_suppl$normal2mci_vs_normal2incid, size_scale = 0.6, linewidth_scale = 0.6
+)
+
+fig_sup_normal2incid_extended_DMP <- sct_extended_DMP_suppl$mci2incid_vs_normal2incid +
+  sct_extended_DMP_suppl$normal2mci_vs_normal2incid +
+  plot_layout(ncol = 1, guides = "collect", axes = "collect", axis_titles = "collect") +
+  plot_annotation(tag_levels = "a")
+
+ggsave(here("normal2mci_focused/patch_figures/output/fig_sup_normal2incid_extended_DMP.png"),
+       fig_sup_normal2incid_extended_DMP,
+       width = 6.5, height = 6.5, dpi = 600, bg = "white",
+       device = grDevices::png)
+```
+
+## Effect size comparison with mci2incid for extended DMPs
+
+```{r}
+#| label: fig-sup-mci2incid-extended-DMP
+
+sct_extended_DMP_suppl$prev_vs_mci2incid <- rescale_layer_params(
+  sct_extended_DMP_suppl$prev_vs_mci2incid, size_scale = 0.6, linewidth_scale = 0.6
+)
+sct_extended_DMP_suppl$normal2mci_vs_mci2incid <- rescale_layer_params(
+  sct_extended_DMP_suppl$normal2mci_vs_mci2incid, size_scale = 0.6, linewidth_scale = 0.6
+)
+
+fig_sup_mci2incid_extended_DMP <- sct_extended_DMP_suppl$prev_vs_mci2incid +
+  sct_extended_DMP_suppl$normal2mci_vs_mci2incid +
+  plot_layout(ncol = 1, guides = "collect", axes = "collect", axis_titles = "collect") +
+  plot_annotation(tag_levels = "a")
+
+ggsave(here("normal2mci_focused/patch_figures/output/fig_sup_mci2incid_extended_DMP.png"),
+       fig_sup_mci2incid_extended_DMP,
+       width = 6.5, height = 6.5, dpi = 600, bg = "white",
+       device = grDevices::png)
+```
+
+## Effect size correlation comparison between normal2mci and mci2incid
+
+```{r}
+#| label: fig-sup-ES-corr
+fs::dir_create(here("normal2mci_focused/patch_figures/output"))
+
+line_plot_ES_corr_suppl$normal2mci_vs_mci2incid <- rescale_layer_params(
+  line_plot_ES_corr_suppl$normal2mci_vs_mci2incid, size_scale = 0.6, linewidth_scale = 0.6
+)
+
+ggsave(here("normal2mci_focused/patch_figures/output/fig_sup_ES_corr_mci2incid_normal2mci.png"),
+       line_plot_ES_corr_suppl$normal2mci_vs_mci2incid,
+       width = 6.5, height = 6.5, dpi = 600, bg = "white",
+       device = grDevices::png)
+```
+
+## Verify output
+
+```{r}
+#| label: verify-output
+
+output_files <- fs::dir_ls(
+  here("normal2mci_focused/patch_figures/output"),
+  glob = "*sup*"
+)
+fs::file_info(output_files) |>
+  select(path, size, modification_time) |>
+  mutate(path = basename(path))
+```

@@ -1,0 +1,166 @@
+---
+title: "Patch main figure — scatter & peak plots (panels a–h)"
+---
+
+```{r}
+#| label: load-packages
+#| echo: false
+
+pacman::p_load(patchwork, ggtext, install = FALSE)
+```
+
+## Introduction
+
+Compose 8 panels of scatter and peak plots into a standalone multi-panel figure. Panels a–d are scatter plots (VAE rank 1–2, UMAP rank 1–2) and panels e–h are peak plots (VAE rank 1–2, UMAP rank 1–2), all at threshold 8.
+
+## Load the data
+
+```{r}
+
+scatter_a <- read_rds(
+  here("VAE/lite/scatter/output/fig_tbl/threshold8/scatter_rank01.rds")
+)
+scatter_b <- read_rds(
+  here("VAE/lite/scatter/output/fig_tbl/threshold8/scatter_rank02.rds")
+)
+scatter_c <- read_rds(
+  here("UMAP/lite/scatter/output/fig_tbl/threshold8/scatter_rank01.rds")
+)
+scatter_d <- read_rds(
+  here("UMAP/lite/scatter/output/fig_tbl/threshold8/scatter_rank02.rds")
+)
+
+peak_e <- read_rds(
+  here("VAE/lite/scatter/output/fig_tbl/threshold8/peak_rank01.rds")
+)
+peak_f <- read_rds(
+  here("VAE/lite/scatter/output/fig_tbl/threshold8/peak_rank02.rds")
+)
+peak_g <- read_rds(
+  here("UMAP/lite/scatter/output/fig_tbl/threshold8/peak_rank01.rds")
+)
+peak_h <- read_rds(
+  here("UMAP/lite/scatter/output/fig_tbl/threshold8/peak_rank02.rds")
+)
+
+```
+
+## Create a theme for the figure
+
+```{r}
+source(here("custom_func/theme_main_fig.R"))
+set_pub_geom_defaults()
+```
+
+## Compose the scatter & peak figure
+
+### Modify ggplot2 objects
+
+```{r}
+
+# Scatter plots (panels a–d)
+scatter_main <- lst(
+  a = scatter_a,
+  b = scatter_b,
+  c = scatter_c,
+  d = scatter_d
+) |>
+  map(~ .x + theme_main_fig() +
+  theme(
+    plot.title = element_blank(),
+    axis.text.x = ggtext::element_markdown(angle = 30, hjust = 1, vjust = 1),
+    legend.position = "none",
+    plot.margin = margin(t = 0, b = 0, l = 0, r = 0)
+  ))
+
+scatter_main$a <- scatter_main$a +
+  theme(
+    legend.position = "top",
+  )
+
+# Rescale geom sizes for publication column width (18" → 6.5")
+scatter_main <- scatter_main |>
+  map(~ rescale_layer_params(.x, size_scale = 0.5, linewidth_scale = 0.5))
+
+# Peak plots (panels e–h)
+peak_main <- lst(
+  e = peak_e,
+  f = peak_f,
+  g = peak_g,
+  h = peak_h
+) |>
+  map(~ .x + theme_main_fig() +
+  theme(
+    plot.title = element_blank(),
+    plot.subtitle = element_blank(),
+    legend.position = "none",
+    axis.text.x = ggtext::element_markdown(angle = 30, hjust = 1, vjust = 1),
+    plot.margin = margin(t = 0, b = 0, l = 0, r = 0)
+  ))
+
+# Rescale peak geom sizes (6" → ~1.6" per panel, heavier scaling)
+peak_main <- peak_main |>
+  map(~ rescale_layer_params(.x, size_scale = 0.35, linewidth_scale = 0.35))
+
+```
+
+### Create row label strips
+
+```{r}
+make_row_label <- function(label) {
+  ggplot() +
+    annotate("rect", xmin = 0, xmax = 1, ymin = 0, ymax = 1, fill = "grey90") +
+    annotate("text", x = 0.5, y = 0.5, label = label, angle = 270, size = 2.5) +
+    theme_void() +
+    theme(plot.margin = margin(0, 0, 0, 0))
+}
+
+label_i <- make_row_label("VAE Rank 1")
+label_j <- make_row_label("VAE Rank 2")
+label_k <- make_row_label("UMAP Rank 1")
+label_l <- make_row_label("UMAP Rank 2")
+```
+
+### Compose with patchwork
+
+```{r}
+#| label: fig-scatter-peak
+#| fig-width: 12
+#| fig-height: 17
+#| fig-cap: "Scatter and peak plots"
+
+layout <- "
+AAAAAAAAAAAAI
+BBBBBBBBBBBBJ
+CCCCCCCCCCCCK
+DDDDDDDDDDDDL
+EEEFFFGGGHHH#
+"
+
+fig_scatter_peak <-
+  scatter_main$a +
+  scatter_main$b +
+  scatter_main$c +
+  scatter_main$d +
+  peak_main$e +
+  peak_main$f +
+  peak_main$g +
+  peak_main$h +
+  label_i + label_j + label_k + label_l +
+  plot_layout(design = layout, guides = "auto", axes = "keep", axis_titles = "keep") +
+  plot_annotation(tag_levels = "a")
+
+# Suppress tags on label panels (panels 9–12)
+for (i in 9:12) {
+  fig_scatter_peak[[i]] <- fig_scatter_peak[[i]] +
+    theme(plot.tag = element_blank())
+}
+
+fig_scatter_peak
+
+fs::dir_create(here("VAE_UMAP_comb/patch_figures/output"))
+png(here("VAE_UMAP_comb/patch_figures/output/fig_scatter_peak.png"),
+    width = 6.5, height = 9, units = "in", res = 600)
+fig_scatter_peak
+dev.off()
+```

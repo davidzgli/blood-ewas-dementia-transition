@@ -1,0 +1,149 @@
+---
+title: "403 DMP Sites Excel Export"
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r}
+#| label: load-packages
+#| echo: false
+
+pacman::p_load(openxlsx2, install = FALSE)
+
+# Source the specialized functions for adding data to Excel
+source(here("custom_func/DMP403_add_cg_to_excel_function.R"))
+source(here("custom_func/add_summary_table_to_excel_function.R"))
+```
+
+## Introduction
+
+This document prepares an Excel file containing the 403 differentially methylated positions (DMPs) that are significantly associated with at least one dementia category after Bonferroni correction (P value < 1.0 x 10-8).
+
+## Load Data
+
+### Load the DMP data
+
+```{r}
+#| label: load-data
+
+# Path to the CSV file
+# dmp_file_path <- here("data/ST1.csv")
+# dmp_file_path <- here(datasets$ST1)
+
+# Read the DMP data
+# dmp_data <- read_csv(dmp_file_path, show_col_types = FALSE) |>
+# Derive the genome-wide significant (p < 1e-8) CpG set from the annotated table
+source(here("custom_func/select_sig_cg.R"))
+
+dmp_data <-
+  read_rds(here("data/upon_request/annotated_asso_wide.rds")) |>
+  select_sig_cg(8) |>
+  # Arrange descending by the mean of the columns starts_with("nlog10_p_value_")
+  arrange(desc(rowMeans(pick(starts_with("nlog10_p_value_"))))) |>
+  # arrange(desc(rowMeans(select(., starts_with("nlog10_p_value_"))))) |>
+  # Add a rank column
+  mutate(rank = row_number()) |>
+  # Select the columns of interest
+  select(rank, cg, chr, pos, UCSC_RefGene, great_anno, starts_with("nlog10_p_value_"), starts_with("estimate_")) |>
+  # Replace NA with "" for UCSC and GREAT columns
+  mutate(
+    UCSC_RefGene = replace_na(UCSC_RefGene, ""),
+    great_anno = replace_na(great_anno, "")
+  ) |>
+  # Relocate normal2mci before stable_mci for p-value columns
+  relocate(nlog10_p_value_normal2mci, .before = nlog10_p_value_stable_mci) |>
+  # Relocate normal2mci before stable_mci for estimate columns
+  relocate(estimate_normal2mci, .before = estimate_stable_mci)
+
+
+# Check the structure of the dataset
+glimpse(dmp_data)
+```
+
+
+
+## Create Excel Workbook
+
+```{r}
+#| label: create-excel
+
+# Start timing
+tic("Excel creation")
+
+# Create a workbook
+wb <- wb_workbook() |>
+  wb_set_bookview(window_height = 100000, window_width = 100000)
+
+# Create legend for the sheet
+suppl_data_order <- 1
+dmp_legend <-
+  fmt_txt("Supplementary Data ", bold = FALSE) +
+  fmt_txt(suppl_data_order, bold = TRUE) +
+  fmt_txt(". A total of 403 CpGs were significantly associated with one of the five dementia transitions at the Bonferroni corrected level (") +
+  fmt_txt("P", italic = TRUE) +
+  fmt_txt(" value < 1.0 x 10") +
+  fmt_txt("-8", vert_align = "superscript") +
+  fmt_txt("). Stable_normal was used as the reference in the multivariate regression model for comparison the changes of CpG methylation after adjusting for the covariates age, sex, smoking status, and immune cell proportions. Gene annotation was done based on Illumina manifest and using GREAT software. Prev denotes prevalent dementia indicating the subjects were already demented at the time of blood draw. The other categories are prospective dementia, meaning the subjects would develop dementia during the > 12 years followup and the trajectories are encoded in the category name; mci2incid denotes the transition from initial mci at blood draw to incident during followup.")
+
+# Add the sheet with data
+wb <- wb |> 
+  add_cg_to_excel(
+    df = dmp_data, 
+    sheet_name = "DMP403", 
+    legend = dmp_legend
+  )
+
+# End timing
+toc()
+```
+
+## Compute summary statistics
+
+```{r}
+#| label: compute-summary
+
+dmp_by_category <- dmp_data |>
+  summarise(
+    n_normal2mci = sum(nlog10_p_value_normal2mci > 8),
+    n_stable_mci = sum(nlog10_p_value_stable_mci > 8),
+    n_normal2incid = sum(nlog10_p_value_normal2incid > 8),
+    n_mci2incid = sum(nlog10_p_value_mci2incid > 8),
+    n_prev = sum(nlog10_p_value_prev > 8)
+  ) 
+
+dmp_by_category
+```
+
+## Add Summary Table to Excel Sheet
+
+```{r}
+#| label: add-summary-table
+
+# Add the summary table to the existing workbook
+wb <- add_summary_table_to_excel(wb, dmp_by_category, "DMP403")
+```
+
+## Save the workbook
+
+```{r}
+#| label: save-excel
+
+
+# Save the workbook
+fs::dir_create(here("extended_data/output"))
+output_file <- here("extended_data/output/DMP403_cg_sites.xlsx")
+wb |> wb_save(output_file)
+
+
+```
+
+## Summary
+
+This document has created an Excel workbook containing the 403 differentially methylated positions (DMPs) that are significantly associated with at least one dementia category. The data is formatted according to the specifications in the specialized `add_cg_to_excel` function, with the following enhancements:
+
+1. Bold legend text for better visibility
+2. Increased row height for the legend to accommodate the longer text
+3. Alternating row colors for better readability
+4. Conditional formatting to highlight highly significant p-values (>8 in -log10 scale)
+5. Proper borders and cell styles for optimal presentation
+

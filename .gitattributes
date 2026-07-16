@@ -1,0 +1,12 @@
+# The bibliography is UTF-8-with-BOM + CRLF and Typst's BibLaTeX parser is picky
+# about both. Never let git rewrite its line endings: a checkout with
+# core.autocrlf=true would turn the already-CRLF content into CR CR LF.
+ms/reference/dementia-EWAS.bib -text
+
+# Binary assets: no diff, no eol conversion.
+*.rds   binary
+*.docx  binary
+*.png   binary
+
+# NOTE: git-lfs is NOT used. The two files in data/publicly_available/ total
+# ~700 KB and are stored as ordinary git blobs.

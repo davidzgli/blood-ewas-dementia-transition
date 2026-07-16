@@ -1,0 +1,130 @@
+---
+title: "Stable MCI DMP scatter"
+subtitle: "DMP with p value < 1e-8"
+---
+
+```{r}
+#| label: load-packages
+#| echo: false
+#| cache: false
+
+pacman::p_load(geomtextpath, colorspace, install = FALSE)
+
+# Prefer all dplyr functions
+conflicted::conflict_prefer_all("dplyr", quiet = TRUE)
+```
+
+## Introduction
+
+Make the scatter plots for the effect size of the stable_mci group against the other dementia categories. A subset of DMPs carries a strongly negative stable_mci effect size; these "outlier" sites decouple from the effect sizes of every other transition.
+
+## Load the data
+
+### Effect size in long format
+
+```{r}
+# Derive the long-format DMP effect sizes from the annotated association table
+source(here("custom_func/select_sig_cg.R"))
+source(here("custom_func/build_dmp_long_effect_size.R"))
+
+es_long <-
+  read_rds(here("data/upon_request/annotated_asso_wide.rds")) |>
+  select_sig_cg(8) |>
+  build_dmp_long_effect_size() |>
+  # Order the facets as prev, mci2incid / normal2incid, normal2mci
+  mutate(demcat = forcats::fct_relevel(demcat, "prev", "mci2incid", "normal2incid", "normal2mci"))
+
+glimpse(es_long)
+```
+
+## Summary of the two groups of stable mci
+
+`build_dmp_long_effect_size()` splits the DMPs on a stable_mci effect size of -0.2.
+
+```{r}
+es_long |>
+  filter(demcat == "normal2mci") |>
+  summarise(
+    .by = stable_mci_grp,
+    n = n(),
+    percent = n() / n_distinct(es_long$cg) * 100,
+    mean_es = mean(stable_mci, na.rm = TRUE),
+    sd_es = sd(stable_mci, na.rm = TRUE)
+  )
+```
+
+## Correlation along the smooth line
+
+Compute the correlation between the stable_mci effect size and each other transition, separately within the main and outlier groups, and build the label drawn along the smooth line by `geomtextpath::geom_textsmooth()`.
+
+Correlations are computed on the full set of DMPs; the outlier filters applied further down affect the display only.
+
+```{r}
+data_stable_mci_two_groups <-
+  es_long |>
+  filter(demcat != "stable_mci") |>
+  mutate(
+    .by = c(demcat, stable_mci_grp),
+    pval = cor.test(stable_mci, es, method = "spearman")$p.value,
+    cor = cor.test(stable_mci, es, method = "spearman")$estimate
+  ) |>
+  # Only a comma separates the two values inside list(); plotmath needs it this way
+  mutate(
+    label = glue("list(italic(r)=={round(cor, 2)}, italic(p)=={round(pval, 3)})")
+  ) |>
+  mutate(
+    vjust = case_when(
+      demcat == "normal2mci" ~ 1.6,
+      TRUE ~ -0.2
+    )
+  )
+
+glimpse(data_stable_mci_two_groups)
+```
+
+## Plot the scatter plot with the correlation along the smooth line
+
+```{r}
+#| label: fig-scatter-plot
+#| fig-height: 8
+#| fig-width: 8
+
+scatter_DMP <-
+  data_stable_mci_two_groups |>
+  # Remove outliers
+  filter(!(demcat == "normal2mci" & es < -0.2)) |>
+  filter(!(demcat == "mci2incid" & es < -0.4)) |>
+  ggplot(aes(x = stable_mci, y = es, colour = stable_mci_grp)) +
+  geom_point(alpha = 0.6, size = 1, shape = "circle small") +
+  geomtextpath::geom_textsmooth(
+    aes(label = label, vjust = vjust),
+    method = "lm",
+    formula = y ~ x,
+    se = FALSE,
+    size = 6 / .pt,
+    textcolour = "black",
+    linewidth = 1,
+    hjust = 0.5,
+    key_glyph = draw_key_point,
+    parse = TRUE
+  ) +
+  scale_color_discrete_qualitative(palette = "Dark 3") +
+  # Show a gray dashed line at x = 0 and y = 0
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray") +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "gray") +
+  facet_wrap(~ demcat, ncol = 2, scales = "free_y") +
+  labs(x = "Effect size of stable_mci", y = "Effect size of other dementia") +
+  guides(color = guide_legend(title = "Stable MCI Group", theme(legend.title.position = "left"))) +
+  theme(legend.position = "top")
+
+scatter_DMP
+```
+
+## Save the figure
+
+```{r}
+#| output: false
+fs::dir_create(here("stable_mci_focused/output"))
+
+write_rds(scatter_DMP, here("stable_mci_focused/output/scatter_DMP.rds"))
+```

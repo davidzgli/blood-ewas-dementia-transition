@@ -1,0 +1,153 @@
+---
+title: "Generate Transition-Specific GO Terms"
+params:
+  top_n: 1000
+editor_options: 
+  chunk_output_type: console
+---
+
+## Load Packages
+
+Load necessary R packages for data manipulation, visualization, and GO analysis.
+
+```{r}
+#| label: load-packages
+#| message: false
+#| warning: false
+
+pacman::p_load(ComplexUpset, install = FALSE)
+
+conflicted::conflict_prefer_all("dplyr", quiet = TRUE)
+```
+
+## Set the top number of genes
+
+```{r}
+#| label: set-top-number
+#| message: false
+
+# top_n <- 1000
+```
+
+## Load Results
+
+Read the previously saved GO enrichment results for top 500 CpG sites.
+
+```{r}
+#| label: load-results
+#| message: false
+
+all_results <- read_rds(here(glue("pathway_analysis/02_gene_ontology/output/top{params$top_n}_all_GO_results.rds"))) |>
+  mutate(condition = factor(
+    condition, 
+    levels = c("normal2mci", "stable_mci", "normal2incid", "mci2incid", "prev")
+  ))
+
+glimpse(all_results)
+```
+
+## Upset Plot function
+
+```{r}
+
+
+create_upset_plot <- function(data, y_limit = 200, min_size = 0) {
+  upset(
+    data = data,
+    intersect = c("normal2mci", "stable_mci", "normal2incid", "mci2incid", "prev"),
+    name = "Dementia Transitions", 
+    width_ratio = 0.2,
+    min_size = min_size,
+    wrap = TRUE,
+    encode_sets = FALSE,
+    matrix = intersection_matrix( geom = geom_point(size = 1)),
+    set_sizes = (
+      upset_set_size() +
+      geom_text( aes(label = after_stat(count) |> format(big.mark = ",")), hjust = 1.1, stat = 'count', size = 6 / .pt) +
+      expand_limits(y = y_limit) +
+        # scale_x_continuous(expand = expansion(mult = 0.2)) +
+      theme(axis.text.x = element_text(angle = 30))
+    ),
+    base_annotations=list(
+        'Intersection size'=intersection_size(
+            text_colors=c(on_background='black', on_bar='white'),
+            text = list(size = 6 / .pt, angle = 0, hjust = 0.5, vjust = -0.3)
+        ) +
+        labs(y = "Intersection")),
+    themes=upset_default_themes(panel.grid=element_blank(), axis.text=element_text(size=6), axis.title=element_text(size=8))
+  )
+}
+```
+
+## Create UpSet Plot
+
+```{r}
+#| label: upset-plot
+#| fig.width: 12
+#| fig.height: 10
+go_wide <- all_results |>
+  # Filter for significant terms
+  filter(p.adjust <= 0.05) |>
+  # Select relevant columns and remove duplicates
+  select(ID, condition) |>
+  distinct() |>
+  # Prepare data for upset plot
+  mutate(presence = 1) |>
+  pivot_wider(
+    id_cols = ID,
+    names_from = condition,
+    values_from = presence,
+    values_fill = 0
+  )
+
+# Set-size labels are drawn past the end of the bar (hjust = 1.1), so the axis must
+# clear the largest set or the longest bar's label is cut off at the panel edge.
+max_set <- go_wide |> select(-ID) |> colSums() |> max()
+
+upset_plot <- go_wide |>
+  create_upset_plot(
+    y_limit = max(300, ceiling(max_set * 1.15 / 50) * 50),
+    min_size = 5
+  )
+
+upset_plot
+```
+
+
+## Identify Condition-Specific Terms
+
+```{r}
+specific_terms <- all_results |>
+  filter(p.adjust <= 0.05) |>
+  add_count(ID, name = "n_GO") |>
+  filter(n_GO == 1) |>
+  select(-n_GO)
+
+glimpse(specific_terms)
+```
+
+## Count the number of specific terms in each condition.
+
+```{r}
+specific_terms |>
+  count(condition)
+```
+
+## Save the results
+
+```{r}
+fs::dir_create(here("pathway_analysis/03_transition_specific_GO_terms/output"))
+
+specific_terms |>
+  select(ID, Description, condition) |>
+  write_csv(here(glue("pathway_analysis/03_transition_specific_GO_terms/output/top{params$top_n}_condition_specific_GO_terms.csv")))
+```
+
+## Save the upset plot
+
+```{r}
+write_rds(
+  upset_plot,
+  here(glue("pathway_analysis/03_transition_specific_GO_terms/output/top{params$top_n}_condition_specific_GO_terms.rds"))
+)
+```

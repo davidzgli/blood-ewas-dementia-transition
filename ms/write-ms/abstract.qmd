@@ -1,0 +1,19 @@
+---
+title: "abstract"
+---
+
+
+
+Dementia is a major global health challenge, with prevalence projected to reach 152 million by 2050. Whether blood DNA methylation can capture preclinical stages of dementia progression remains unclear. We performed an epigenome-wide association analysis of baseline blood methylation in 2,491 participants from the Age, Gene/Environment Susceptibility (AGES) Reykjavik Study, with up to 13.4 years of follow-up. Relative to participants with stable normal cognition, individuals who later progressed from normal cognition to mild cognitive impairment (MCI) showed methylation patterns that were directionally opposite to those observed in prevalent and incident dementia. By contrast, individuals who later progressed directly from normal cognition to incident dementia already showed dementia-concordant methylation patterns while cognitively normal at baseline. Dimensionality reduction analyses identified a continuous epigenetic trajectory that paralleled clinical progression stages. Gene ontology analyses showed stage-specific biology, with early transitions enriched for synaptic, extracellular matrix and immune pathways, intermediate stages enriched for hypoxia-related processes, and prevalent dementia enriched for cell-cycle dysregulation. These findings indicate that blood methylation profiles capture trajectory-specific alterations years before clinical dementia and may support earlier risk stratification and intervention.
+
+
+## Keywords
+
+- Dementia
+- Cognitive trajectories
+- Longitudinal study
+- Early detection
+- DNA methylation
+- Epigenome-wide association study
+- Epigenetic signatures
+- Disease progression

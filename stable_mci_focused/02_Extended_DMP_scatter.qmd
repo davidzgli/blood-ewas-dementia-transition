@@ -1,0 +1,223 @@
+---
+title: "Stable MCI extended DMP scatter"
+subtitle: "Effect size correlation across a series of p value cutoffs"
+---
+
+```{r}
+#| label: load-packages
+#| echo: false
+#| cache: false
+
+pacman::p_load(rstatix, ggtext, colorspace, geomtextpath, install = FALSE)
+
+# Prefer all dplyr functions
+conflicted::conflict_prefer_all("dplyr", quiet = TRUE)
+```
+
+## Introduction
+
+Show the correlation between the stable_mci effect size and the effect sizes of the other dementia categories at a series of p value cutoffs. Display the difference between the two groups of CG sites.
+
+## Load the data
+
+### Association data
+
+Read the association data filtered to the CG sites with nlog10_p_value >= 5, and split the sites into the main and outlier groups on the stable_mci effect size.
+
+```{r}
+stable_mci_es_cutoff <- -0.2
+
+asso <-
+  read_rds(here("data/publicly_available/association_nlog10_p_value_lgeq5_wide.rds")) |>
+  mutate(stable_mci_grp = if_else(estimate_stable_mci < stable_mci_es_cutoff, "outlier", "main"))
+
+glimpse(asso)
+```
+
+## Function for selecting cg sites
+
+```{r}
+source(here("custom_func/select_sig_cg.R"))
+
+# Test the function
+select_sig_cg(asso, 6) |>
+  glimpse()
+```
+
+## Collect data by p value cutoff
+
+Select effect size for p value cutoff 5:7, assemble the data into a long format tibble.
+
+```{r}
+effect_size_series <-
+  5:7 |>
+  set_names() |>
+  map(~ select_sig_cg(asso, .x)) |>
+  list_rbind(names_to = "pval_cutoff") |>
+  # Remove the nlog10_p_value columns
+  select(-starts_with("nlog10_p_value_")) |>
+  # Remove "estimate_" from the column names
+  rename_all(~ str_remove(.x, "^estimate_"))
+
+glimpse(effect_size_series)
+```
+
+## Make a data preparation function
+
+This function accepts a data tibble, filters out the outliers, annotates `pval_cutoff` with the site count, and computes the correlation between stable_mci and a second dementia category.
+
+```{r}
+#| output: false
+
+effect_size_for_scatter_plot <- function(.data, filter_condition = TRUE, demcat2 = normal2incid) {
+  .data |>
+    # Filter out the outliers
+    filter({{filter_condition}}) |>
+    # Count the number of cg sites
+    add_count(pval_cutoff, name = "n_cg") |>
+    # Modify pval_cutoff
+    mutate(
+      pval_cutoff = glue(
+        "{pval_cutoff} <br><span style = 'font-size:6pt'> (n={format(n_cg, big.mark = \",\")}) </span>"
+      )
+    ) |>
+    # Calculate the correlation between two dementia categories and create a label
+    mutate(
+      .by = c(pval_cutoff, stable_mci_grp),
+      cor = cor.test(stable_mci, {{demcat2}}, method = "spearman")$estimate,
+      cor_pval = cor.test(stable_mci, {{demcat2}}, method = "spearman")$p.value,
+      cor_label = glue(
+        "r={scales::label_number(style_negative='hyphen', accuracy=0.01)(cor)}; p={round(cor_pval, 3)}"
+      )
+    )
+}
+
+# Test the function
+effect_size_series |>
+  effect_size_for_scatter_plot(
+    filter_condition = between(prev, -1.4, 0.3),
+    demcat2 = prev
+  ) |>
+  glimpse()
+```
+
+## Make a plotting function
+
+This function accepts a data tibble and plots a scatter plot of the effect size of stable_mci against a second dementia category, faceted by p value cutoff.
+
+```{r}
+#| output: false
+
+make_effect_size_scatter_plot <- function(.data, demcat2 = "prev", ...) {
+  .data |>
+    ggplot(aes(x = stable_mci, y = .data[[demcat2]], colour = stable_mci_grp)) +
+    geom_point(alpha = 0.6, size = 1) +
+    geomtextpath::geom_textsmooth(
+      aes(label = cor_label),
+      method = "lm",
+      formula = y ~ x,
+      se = FALSE,
+      size = 6 / .pt,
+      key_glyph = draw_key_point,
+      textcolour = "black",
+      linewidth = 1,
+      vjust = -0.2,
+      hjust = 0.5
+    ) +
+    scale_color_discrete_qualitative(palette = "Dark 3") +
+    # Show a gray dashed line at x = 0 and y = 0
+    geom_hline(yintercept = 0, linetype = "dashed", color = "gray") +
+    geom_vline(xintercept = 0, linetype = "dashed", color = "gray") +
+    facet_wrap(~ pval_cutoff, scales = "free", labeller = label_both) +
+    labs(
+      x = "Effect size of stable_mci",
+      y = glue(
+        "Effect size of {dc}",
+        dc = if (demcat2 == "prev") "prevalent dementia" else glue("{demcat2} transition")
+      )
+    ) +
+    guides(color = guide_legend(title = "Stable MCI Group", theme(legend.title.position = "left"))) +
+    theme(
+      strip.text = element_textbox_simple(halign = 0.5, lineheight = 0.1, margin = margin(8, 2, 2, 2)),
+      legend.position = "top"
+    )
+}
+```
+
+## Initialize a list for storing the plots
+
+```{r}
+scatter_list <- list()
+```
+
+## Prev vs stable_mci
+
+```{r}
+#| label: fig-prev
+#| fig-width: 10
+#| fig-height: 6
+
+scatter_list$prev <-
+  effect_size_series |>
+  effect_size_for_scatter_plot(
+    filter_condition = between(prev, -1.4, 0.3),
+    demcat2 = prev
+  ) |>
+  make_effect_size_scatter_plot(demcat2 = "prev")
+
+scatter_list$prev
+```
+
+## Normal2incid vs stable_mci
+
+```{r}
+#| label: fig-normal2incid
+#| fig-width: 10
+#| fig-height: 6
+
+scatter_list$normal2incid <-
+  effect_size_series |>
+  effect_size_for_scatter_plot(demcat2 = normal2incid) |>
+  make_effect_size_scatter_plot(demcat2 = "normal2incid")
+
+scatter_list$normal2incid
+```
+
+## Mci2incid vs stable_mci
+
+```{r}
+#| label: fig-mci2incid
+#| fig-width: 10
+#| fig-height: 6
+
+scatter_list$mci2incid <-
+  effect_size_series |>
+  effect_size_for_scatter_plot(demcat2 = mci2incid) |>
+  make_effect_size_scatter_plot(demcat2 = "mci2incid")
+
+scatter_list$mci2incid
+```
+
+## Normal2mci vs stable_mci
+
+```{r}
+#| label: fig-normal2mci
+#| fig-width: 10
+#| fig-height: 6
+
+scatter_list$normal2mci <-
+  effect_size_series |>
+  effect_size_for_scatter_plot(demcat2 = normal2mci) |>
+  make_effect_size_scatter_plot(demcat2 = "normal2mci")
+
+scatter_list$normal2mci
+```
+
+## Save the plots
+
+```{r}
+#| output: false
+fs::dir_create(here("stable_mci_focused/output"))
+
+write_rds(scatter_list, here("stable_mci_focused/output/scatter_extended.rds"))
+```

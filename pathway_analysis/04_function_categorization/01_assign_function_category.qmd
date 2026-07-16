@@ -1,0 +1,103 @@
+---
+title: "Automated Biological Function Categorization"
+subtitle: "Keyword-based assignment of GO terms to function categories"
+params:
+  top_n: 1000
+---
+
+## Overview
+
+Applies automated keyword-based regex matching to assign biological function categories to condition-specific GO terms from the upstream pipeline output.
+
+## Load packages
+
+```{r}
+#| label: load-packages
+#| message: false
+
+pacman::p_load(writexl, install = FALSE)
+
+conflicted::conflict_prefer_all("dplyr", quiet = TRUE)
+```
+
+## Source the categorization function
+
+```{r}
+#| label: source-function
+
+source(here("custom_func/assign_biofunc_category.R"))
+```
+
+## Load data
+
+Read the CSV file containing condition-specific GO terms.
+
+```{r}
+#| label: load-data
+
+go_terms <- read_csv(
+  here(glue("pathway_analysis/03_transition_specific_GO_terms/output/top{params$top_n}_condition_specific_GO_terms.csv")),
+  show_col_types = FALSE
+)
+
+glue("top{params$top_n}: {nrow(go_terms)} rows")
+```
+
+## Apply automated categorization
+
+```{r}
+#| label: apply-categorization
+
+go_terms_cat <- go_terms |>
+  mutate(function_category = assign_biofunc_category(Description))
+```
+
+## Save automated categorizations
+
+```{r}
+#| label: save-excel
+
+fs::dir_create(here("pathway_analysis/04_function_categorization/output"))
+
+write_xlsx(
+  go_terms_cat,
+  here(glue("pathway_analysis/04_function_categorization/output/top{params$top_n}_condition_specific_GO_terms_auto_cat.xlsx"))
+)
+
+glue("Saved top{params$top_n} automated categorizations to output/")
+```
+
+## Summary
+
+### Check for uncategorized terms
+
+```{r}
+#| label: check-na
+
+na_count <- sum(is.na(go_terms_cat$function_category))
+
+glue("Uncategorized terms: {na_count} out of {nrow(go_terms_cat)} ({scales::percent(na_count / nrow(go_terms_cat), accuracy = 0.1)})")
+```
+
+```{r}
+#| label: show-na-terms
+
+if (na_count > 0) {
+  go_terms_cat |>
+    filter(is.na(function_category)) |>
+    distinct(Description) |>
+    knitr::kable(caption = "Uncategorized descriptions")
+}
+```
+
+### Category counts per condition
+
+```{r}
+#| label: category-counts
+
+go_terms_cat |>
+  count(condition, function_category) |>
+  pivot_wider(names_from = condition, values_from = n, values_fill = 0) |>
+  arrange(function_category) |>
+  knitr::kable(caption = glue("Category counts for top{params$top_n}"))
+```

@@ -1,0 +1,162 @@
+---
+title: "Reference Study Comparison Table"
+subtitle: "Comparison of AGES cohort with published dementia EWAS studies"
+---
+
+```{r}
+#| label: load-packages
+#| echo: false
+
+pacman::p_load(gt, install = FALSE)
+```
+
+## Overview
+
+This document compares the AGES cohort dementia EWAS methodology with two published reference studies used for validation:
+
+### AGES Cohort (Current Study)
+
+- **Study design:** Cross-sectional analysis of cognitive transitions
+- **Sample size:** 2,491 participants
+- **Tissue:** Whole blood
+- **Purpose:** Identify DNA methylation changes associated with dementia transitions (prevalent dementia, normal to MCI, stable MCI, normal to incident dementia, MCI to incident dementia vs stable normal)
+
+### ADNI/AIBL Meta-Analysis (Silva et al., Nature Communications, 2022)
+
+- **Study design:** Longitudinal meta-analysis
+- **Sample size:** 797 unique individuals (427 AD, 857 CN samples total)
+- **Tissue:** Whole blood (with cross-tissue validation in brain)
+- **Purpose:** Identify blood-based DNA methylation biomarkers for Alzheimer's disease diagnosis
+
+### AddNeuroMed Study (Roubroeks et al., Neurobiology of Aging, 2020)
+
+- **Study design:** Cross-sectional with 1-year follow-up
+- **Sample size:** 284 total (89 CN, 109 MCI, 86 AD)
+- **Tissue:** Whole blood
+- **Purpose:** Identify differentially methylated positions across AD continuum
+
+## Reference Comparison Table
+
+```{r}
+#| label: create-comparison-table
+
+# Create comparison data frame
+comparison_data <- tibble::tribble(
+  ~study, ~platform,  ~statistical_method, ~comparison_groups, ~sample_size, ~ages_equivalent,
+
+  "AGES Cohort\n(Current Study)",
+  "Illumina EPIC",
+
+  "Linear regression",
+  "prev, normal2mci, stable_mci,\nnormal2incid, mci2incid\nvs stable_normal",
+  "2,491",
+  "---",
+
+  "ADNI/AIBL Meta-Analysis\n(Silva et al., 2022)",
+  "Illumina EPIC",
+  "Logistic regression\n(mixed-effects for ADNI)",
+  "AD vs CN",
+  "797 unique\n(227 AD, 570 CN)",
+  "prevalent dementia (AD)\nvs stable_normal (CN)",
+
+  "AddNeuroMed Study\n(Roubroeks et al., 2020)",
+  "Illumina 450K",
+  "ANOVA on residuals",
+  "AD vs CN, \n MCI vs CN",
+  "284\n(89 CN, 109 MCI, 86 AD)",
+  "AD vs CN ~ prevalent, \nMCI vs CN ~ mci2incid/\nstable_mci"
+)
+
+# Create gt table
+# Convert \n to <br> for HTML rendering and use fmt_markdown()
+comparison_table <- comparison_data |>
+  dplyr::mutate(dplyr::across(dplyr::everything(), \(x) stringr::str_replace_all(x, "\n", "<br>"))) |>
+  gt() |>
+  fmt_markdown(columns = everything()) |>
+  cols_label(
+    study = "Study",
+    platform = "Platform",
+    statistical_method = "Statistical\nMethod",
+    comparison_groups = "Comparison\nGroups",
+    sample_size = "Sample\nSize",
+    ages_equivalent = "AGES Equivalent\nComparison"
+  ) |>
+  tab_header(
+    title = md("**Comparison of AGES Cohort with Published Dementia EWAS Studies**"),
+  ) |>
+  tab_source_note(
+    source_note = md("**Abbreviations:** AD = Alzheimer's disease; CN = Cognitively normal; MCI = Mild cognitive impairment; OLS = Ordinary least squares")
+  ) |>
+  tab_style(
+    style = cell_fill(color = "#E8F4F8"),
+    locations = cells_body(rows = 1)
+  ) |>
+  tab_style(
+    style = cell_text(weight = "bold"),
+    locations = cells_body(columns = study)
+  ) |>
+  tab_style(
+    style = cell_text(size = px(11)),
+    locations = cells_body()
+  ) |>
+  tab_style(
+    style = cell_text(size = px(12), weight = "bold"),
+    locations = cells_column_labels()
+  ) |>
+  tab_style(
+    style = cell_borders(
+      sides = "bottom",
+      color = "#999999",
+      weight = px(2)
+    ),
+    locations = cells_column_labels()
+  ) |>
+  cols_width(
+    study ~ px(180),
+    platform ~ px(100),
+    statistical_method ~ px(130),
+    comparison_groups ~ px(150),
+    sample_size ~ px(110),
+    ages_equivalent ~ px(150)
+  ) |>
+  cols_align(
+    align = "center",
+    columns = c(platform,  sample_size)
+  ) |>
+  cols_align(
+    align = "left",
+    columns = c(study, statistical_method, comparison_groups, ages_equivalent)
+  ) |>
+  opt_table_font(
+    font = list("Helvetica", "Arial", default_fonts())
+  ) |>
+  tab_options(
+    table.border.top.color = "#999999",
+    table.border.bottom.color = "#999999",
+    heading.border.bottom.color = "#999999",
+    column_labels.border.bottom.color = "#999999",
+    table_body.hlines.color = "#DDDDDD",
+    table.width = pct(100)
+  )
+
+comparison_table
+```
+
+## Save Table
+
+```{r}
+#| label: save-table
+
+# Create output directory
+fs::dir_create(here("validation/output"))
+
+# Save as PNG
+comparison_table |>
+  gtsave(
+    filename = here("validation/output/reference_comparison_table.png"),
+    expand = 10,
+    vwidth = 950,
+    vheight = 600,
+    zoom = 3
+  )
+```

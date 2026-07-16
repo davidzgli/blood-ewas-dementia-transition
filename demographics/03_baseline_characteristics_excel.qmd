@@ -1,0 +1,364 @@
+---
+title: "Baseline Characteristics Excel Export"
+editor_options:
+  chunk_output_type: console
+---
+
+```{r}
+#| label: load-packages
+#| echo: false
+
+pacman::p_load(haven, openxlsx2, gtsummary, gt, labelled, install = FALSE)
+
+conflicted::conflict_prefer_all("dplyr", quiet = TRUE)
+```
+
+## Overview
+
+This document generates a supplementary table with comprehensive baseline clinical and demographic characteristics stratified by dementia transition category.
+
+## Introduction
+
+This document creates an Excel file containing baseline characteristics of the AGES cohort stratified by dementia transition categories. The format follows the proteomics Nature Aging 2024 supplementary tables.
+
+## Load Data
+
+### Derived Variables
+
+Load the AGES1 derived variables from the SAS dataset.
+
+```{r}
+#| label: load-derived-variables
+
+dv <- haven::read_sas(here("data/private/ages1_derived_variables_nov2021.sas7bdat")) |>
+  clean_names()
+
+dim(dv)
+```
+
+### APOE Genotype
+
+Load the APOE genotype data.
+
+```{r}
+#| label: load-apoe
+
+apoe <- haven::read_sas(here("data/private/apoe_genotype.sas7bdat")) |>
+  clean_names() |>
+  select(subr_id18, genoapoe) |>
+  mutate(subr_id18 = as.character(subr_id18))
+
+glimpse(apoe)
+```
+
+### Dementia Status
+
+Load the dementia status from the methylation dataset.
+
+```{r}
+#| label: load-dementia-status
+
+dem <- read_rds(here("data/collaborator_only/covariates_and_meth_DMP_on_chr21.rds")) |>
+  # Exclude subjects with missing smoking status (n=5)
+  filter(!is.na(a1smokingstatus)) |>
+  select(subr_id18, dementia_ages1_eos) |>
+  mutate(subr_id18 = as.character(subr_id18))
+
+glimpse(dem)
+```
+
+## Merge Data
+
+### Select Target Variables
+
+```{r}
+#| label: select-target-vars
+
+target_vars <- c("a1education", "a1bmi", "a1memory2", "a1speed2", "a1working2",
+                 "a1sys", "a1did", "a1s_chol", "a1s_tg", "a1s_glu")
+```
+
+### Merge Datasets
+
+```{r}
+#| label: merge-data
+
+baseline_data <- dv |>
+  select(subr_id18, all_of(target_vars)) |>
+  mutate(subr_id18 = as.character(subr_id18)) |>
+  inner_join(dem, by = "subr_id18") |>
+  inner_join(apoe, by = "subr_id18") 
+
+dim(baseline_data)
+glimpse(baseline_data)
+```
+
+## Clean and Label Variables
+
+```{r}
+#| label: clean-and-label
+
+baseline_clean <- baseline_data |>
+  # Reorder the columns
+  relocate(subr_id18, a1education, a1bmi, a1sys, a1did, a1s_chol, a1s_tg, a1s_glu, a1memory2, a1speed2, a1working2, genoapoe) |>
+  # Recode dementia transition for display
+  mutate(
+    dementia_transition = fct_relevel(
+      dementia_ages1_eos,
+      "stable_normal", "normal2mci", "stable_mci", "normal2incid", "mci2incid", "prev"
+    ),
+    # Recode APOE genotype as factor with Greek epsilon labels
+    genoapoe = factor(genoapoe, levels = c("22", "23", "33", "24", "34", "44")) |>
+      fct_recode(
+        "ε2/ε2" = "22",
+        "ε2/ε3" = "23",
+        "ε3/ε3" = "33",
+        "ε2/ε4" = "24",
+        "ε3/ε4" = "34",
+        "ε4/ε4" = "44"
+      ),
+    # Recode education as categorical variable
+    # Primary (≤6 years), Secondary (≤9 years), College (~13 years), University (≥14 years)
+    education = case_when(
+      a1education == 1 ~ "Primary",
+      a1education == 2 ~ "Secondary",
+      a1education == 3 ~ "College",
+      a1education == 4 ~ "University",
+      TRUE ~ NA_character_
+    ) |> factor(levels = c("Primary", "Secondary", "College", "University"))
+  ) |>
+  select(-dementia_ages1_eos, -a1education) |>
+  # Move education to first position after subr_id18
+
+  relocate(education, .after = subr_id18) |>
+  # Set variable labels
+  labelled::set_variable_labels(
+    education = "Education",
+    a1bmi = "BMI (kg/m2)",
+    a1sys = "Systolic BP (mmHg)",
+    a1did = "Diastolic BP (mmHg)",
+    a1s_chol = "Serum cholesterol (mmol/L)",
+    a1s_tg = "Serum triglycerides (mmol/L)",
+    a1s_glu = "Fasting glucose (mmol/L)",
+    # a1s_hba1 = "HbA1c",
+    a1memory2 = "Memory score",
+    a1speed2 = "Processing speed score",
+    a1working2 = "Working memory score",
+    # a1dm = "Diabetes mellitus",
+    genoapoe = "APOE genotype",
+    dementia_transition = "Dementia transition"
+  )
+
+glimpse(baseline_clean)
+```
+
+## Create Summary Table
+
+### Generate Table with gtsummary
+
+```{r}
+#| label: create-summary-table
+
+tbl <- baseline_clean |>
+  select(-subr_id18) |>
+  tbl_summary(
+    by = dementia_transition,
+    statistic = list(
+      all_continuous() ~ "{mean} ({sd})",
+      all_categorical() ~ "{n} ({p}%)"
+    ),
+    missing = "ifany",
+    missing_text = "Missing"
+  ) |>
+  add_p(
+    test = list(
+      all_continuous() ~ "kruskal.test",
+      all_categorical() ~ "chisq.test"
+    )
+  ) |>
+  add_overall(last = FALSE) |>
+  bold_labels()
+
+tbl
+```
+
+### Save the table as PNG file
+
+```{r}
+tbl |> 
+  as_gt() |> 
+  gtsave(file = here("demographics/output/baseline_characteristics_by_dementia.png"), expand = 10, vwidth = 1200, vheight = 1600, zoom = 2)
+```
+
+### Save the table without APOE as PNG file
+
+```{r}
+baseline_clean |>
+  select(-subr_id18, -genoapoe) |>
+  tbl_summary(
+    by = dementia_transition,
+    statistic = list(
+      all_continuous() ~ "{mean} ({sd})",
+      all_categorical() ~ "{n} ({p}%)"
+    ),
+    missing = "no"
+  ) |>
+  add_p(
+    test = list(
+      all_continuous() ~ "kruskal.test",
+      all_categorical() ~ "chisq.test"
+    )
+  ) |>
+  add_overall(last = FALSE) |>
+  bold_labels() |>
+  as_gt() |>
+  gtsave(file = here("demographics/output/baseline_characteristics_by_dementia_no_apoe.png"), expand = 10, vwidth = 1200, vheight = 1400, zoom = 2)
+```
+
+### Convert to Data Frame for Excel
+
+```{r}
+#| label: convert-to-df
+
+tbl_df <- tbl |>
+  as_tibble()
+
+glimpse(tbl_df)
+```
+
+## Export to Excel
+
+### Create Workbook
+
+```{r}
+#| label: create-workbook
+
+# Create workbook
+wb <- wb_workbook() |>
+  wb_set_bookview(window_height = 100000, window_width = 100000)
+
+# Define legend
+legend <- "Supplementary Table X. Baseline characteristics of the AGES cohort stratified by dementia transition. Continuous variables are presented as mean (SD). Categorical variables are presented as n (%). P values are obtained from Kruskal-Wallis test for continuous variables and chi-square test for categorical variables. Education levels: Primary (6 years or less); Secondary (9 years or less); College (around 13 years); University (14 years or more). Dementia transitions: stable_normal = cognitively normal at baseline and follow-up (reference); normal2mci = normal to MCI; stable_mci = MCI at baseline and follow-up; normal2incid = normal to incident dementia; mci2incid = MCI to incident dementia; prev = prevalent dementia at blood draw."
+
+# Sheet name
+sheet_name <- "Baseline_characteristics"
+```
+
+### Add Data to Worksheet
+
+```{r}
+#| label: add-data-to-worksheet
+
+# Add worksheet
+wb <- wb |>
+  wb_add_worksheet(sheet_name)
+
+# Add legend (row 1)
+wb <- wb |>
+  wb_add_data(sheet = sheet_name, x = legend, start_row = 1, start_col = 1)
+
+# Merge legend cells
+n_cols <- ncol(tbl_df)
+wb <- wb |>
+  wb_merge_cells(sheet = sheet_name, rows = 1, cols = 1:n_cols)
+
+# Add data (starting row 3)
+wb <- wb |>
+  wb_add_data(sheet = sheet_name, x = tbl_df, start_row = 3, start_col = 1)
+```
+
+### Apply Formatting
+
+```{r}
+#| label: apply-formatting
+
+# Define styles
+legend_style <- wb_add_font(wb, bold = TRUE, size = 11)
+header_style <- wb_add_font(wb, bold = TRUE, size = 10)
+
+# Get data dimensions
+n_rows <- nrow(tbl_df)
+data_start_row <- 3
+data_end_row <- data_start_row + n_rows
+
+# Format legend row
+wb <- wb |>
+  wb_add_cell_style(
+    sheet = sheet_name,
+    dims = wb_dims(rows = 1, cols = 1),
+    wrap_text = TRUE,
+    vertical = "top"
+  ) |>
+  wb_set_row_heights(sheet = sheet_name, rows = 1, heights = 80)
+
+# Format header row
+wb <- wb |>
+  wb_add_font(
+    sheet = sheet_name,
+    dims = wb_dims(rows = data_start_row, cols = 1:n_cols),
+    bold = TRUE
+  ) |>
+  wb_add_cell_style(
+    sheet = sheet_name,
+    dims = wb_dims(rows = data_start_row, cols = 1:n_cols),
+    wrap_text = TRUE
+  )
+
+# Add borders to data area
+wb <- wb |>
+  wb_add_border(
+    sheet = sheet_name,
+    dims = wb_dims(rows = data_start_row:data_end_row, cols = 1:n_cols),
+    left_border = "thin",
+    right_border = "thin",
+    top_border = "thin",
+    bottom_border = "thin"
+  )
+
+# Set column widths
+wb <- wb |>
+  wb_set_col_widths(
+    sheet = sheet_name,
+    cols = 1,
+    widths = 25
+  ) |>
+  wb_set_col_widths(
+    sheet = sheet_name,
+    cols = 2:n_cols,
+    widths = 15
+  )
+
+# Add alternating row colors for data rows
+light_gray <- wb_color(hex = "F2F2F2")
+for (i in seq(data_start_row + 1, data_end_row, by = 2)) {
+  wb <- wb |>
+    wb_add_fill(
+      sheet = sheet_name,
+      dims = wb_dims(rows = i, cols = 1:n_cols),
+      color = light_gray
+    )
+}
+```
+
+### Save Workbook
+
+```{r}
+#| label: save-workbook
+
+# Create output directory
+fs::dir_create(here("demographics/output"))
+
+# Save workbook
+output_file <- here("demographics/output/baseline_characteristics_by_dementia.xlsx")
+wb |> wb_save(output_file)
+
+glue("Excel file saved to: {output_file}")
+```
+
+## Summary
+
+This document created an Excel file containing baseline characteristics stratified by dementia transition categories:
+
+- **Variables included**: Education, BMI, cognitive scores (memory, speed, working memory), systolic BP, diabetes indicators, serum measures (cholesterol, triglycerides, glucose, HbA1c), and APOE genotype
+- **Stratification**: 6 dementia transition categories plus overall
+- **Statistics**: Mean (SD) for continuous, n (%) for categorical, with p-values from Kruskal-Wallis and chi-square tests

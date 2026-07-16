@@ -1,0 +1,20 @@
+# Python environment for VAE/lite/ (Pipeline B). Pipelines A and C need no Python.
+#
+# The published VAE was trained with these versions on a CUDA 12 GPU.
+#
+#   python3 -m venv ~/.venvs/dementia-vae
+#   ~/.venvs/dementia-vae/bin/pip install -r requirements.txt
+#   export VAE_VIRTUALENV=~/.venvs/dementia-vae
+#
+# Reference environment: Python 3.13.7, Linux x86_64, CUDA 12.
+# TensorFlow 2.20 supports Python 3.9-3.13.
+#
+# Only direct dependencies are pinned. The nvidia-*-cu12 wheels, absl-py,
+# protobuf, ml_dtypes, grpcio and the rest arrive transitively via
+# tensorflow[and-cuda]; pinning them by hand produces an unsolvable resolve.
+
+tensorflow[and-cuda]==2.20.0
+keras==3.11.3
+numpy==2.3.3
+scipy==1.16.2
+h5py==3.14.0

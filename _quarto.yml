@@ -1,0 +1,72 @@
+project:
+  title: "blood-ewas-dementia-transition"
+
+# Editor settings
+editor: source
+editor_options:
+  chunk_output_type: console
+
+# Document structure
+toc: true
+toc-title: "Contents"
+toc-depth: 5
+number-sections: true
+number-depth: 5
+
+# Rendering date
+date: now
+date-format: dddd MMM D, YYYY  hh:mm:ss
+
+# Code execution settings
+execute:
+  warning: false
+  error: false
+  message: false
+  freeze: false
+  # If cache is true, a *_files folder will be created in the output directory,
+  # even if embed-resources is true.
+  cache: false
+  eval: true
+
+# Output formats
+format:
+  # HTML output settings
+  html:
+    theme: cosmo
+    embed-resources: true
+    smooth-scroll: true
+    code-tools:
+      source: true
+      toggle: true
+      caption: none
+    code-fold: true
+    code-summary: "Show the code"
+    code-copy: true
+    code-overflow: scroll
+    code-block-border-left: true
+    link-external-icon: true
+    link-external-newwindow: true
+    citations-hover: true
+    footnotes-hover: true
+
+  # PDF output settings
+  pdf:
+    documentclass: article
+    papersize: letter
+    colorlinks: true
+    lof: true
+    lot: true
+    execute:
+      echo: false
+    number-sections: true
+
+  # Word output settings
+  docx:
+    colorlinks: true
+    execute:
+      echo: false
+
+  # Typst output settings
+  typst:
+    papersize: letter
+

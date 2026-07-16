@@ -1,0 +1,118 @@
+---
+title: "Patch main figure — normal2mci scatter & ES correlation"
+---
+
+## Overview
+
+Apply publication theming to the normal-to-MCI scatter plots and effect-size correlation panels, compose into a single multi-panel main figure, and save as high-resolution PNG.
+
+```{r}
+#| label: load-packages
+#| echo: false
+
+pacman::p_load(patchwork, ggtext, install = FALSE)
+```
+
+```{r}
+#| label: setup-theme
+
+source(here("custom_func/theme_main_fig.R"))
+set_pub_geom_defaults()
+```
+
+## Load RDS plots
+
+```{r}
+#| label: load-rds
+
+sct_DMP_main <- read_rds(here("normal2mci_focused/output/scatter_DMP_main.rds"))
+sct_extended_DMP_main <- read_rds(here("normal2mci_focused/output/scatter_extended_DMP_main.rds"))
+line_plot_ES_corr_main <- read_rds(here("normal2mci_focused/output/line_plot_ES_corr_main.rds"))
+```
+
+## Apply theme and rescale
+
+```{r}
+#| label: theme-rescale
+
+sct_DMP_main$prev <- sct_DMP_main$prev + theme_main_fig() +
+  theme(
+    axis.text.x = ggtext::element_markdown(angle = 30, hjust = 1, vjust = 1),
+  )
+
+sct_DMP_main$mci2incid <- sct_DMP_main$mci2incid + theme_main_fig() +
+  theme(
+    axis.text.x = ggtext::element_markdown(angle = 30, hjust = 1, vjust = 1),
+  )
+
+sct_extended_DMP_main$normal2incid_vs_prev <- sct_extended_DMP_main$normal2incid_vs_prev +
+  theme_main_fig() +
+  theme(
+    axis.text.x = ggtext::element_markdown(angle = 30, hjust = 1, vjust = 1),
+  )
+
+sct_extended_DMP_main$normal2mci_vs_prev <- sct_extended_DMP_main$normal2mci_vs_prev +
+  theme_main_fig() +
+  theme(
+    axis.text.x = ggtext::element_markdown(angle = 30, hjust = 1, vjust = 1),
+  )
+
+line_plot_ES_corr_main$normal2mci_vs_prev <- line_plot_ES_corr_main$normal2mci_vs_prev +
+  theme_main_fig() +
+  theme(
+    legend.position = "none",
+    axis.text.x = ggtext::element_markdown(angle = 30, hjust = 1, vjust = 1),
+    panel.border = element_rect(fill = NA, color = NA),
+    axis.line = element_line(color = NA),
+  )
+
+line_plot_ES_corr_main$normal2mci_vs_normal2incid <- line_plot_ES_corr_main$normal2mci_vs_normal2incid +
+  theme_main_fig() +
+  theme(
+    legend.position = "none",
+    axis.text.x = ggtext::element_markdown(angle = 30, hjust = 1, vjust = 1),
+    panel.border = element_rect(fill = NA, color = NA),
+    axis.line = element_line(color = NA),
+  )
+
+# Rescale geom sizes for publication column width
+sct_DMP_main$prev <- rescale_layer_params(sct_DMP_main$prev, size_scale = 0.5, linewidth_scale = 0.5)
+sct_DMP_main$mci2incid <- rescale_layer_params(sct_DMP_main$mci2incid, size_scale = 0.5, linewidth_scale = 0.5)
+sct_extended_DMP_main$normal2incid_vs_prev <- rescale_layer_params(sct_extended_DMP_main$normal2incid_vs_prev, size_scale = 0.5, linewidth_scale = 0.5)
+sct_extended_DMP_main$normal2mci_vs_prev <- rescale_layer_params(sct_extended_DMP_main$normal2mci_vs_prev, size_scale = 0.5, linewidth_scale = 0.5)
+line_plot_ES_corr_main$normal2mci_vs_prev <- rescale_layer_params(line_plot_ES_corr_main$normal2mci_vs_prev, size_scale = 0.5, linewidth_scale = 0.5)
+line_plot_ES_corr_main$normal2mci_vs_normal2incid <- rescale_layer_params(line_plot_ES_corr_main$normal2mci_vs_normal2incid, size_scale = 0.5, linewidth_scale = 0.5)
+```
+
+## Compose and save
+
+```{r}
+#| label: compose-main-fig
+fs::dir_create(here("normal2mci_focused/patch_figures/output"))
+
+fig_normal2mci <-
+(sct_DMP_main$prev + sct_DMP_main$mci2incid) -
+  (sct_extended_DMP_main$normal2incid_vs_prev + sct_extended_DMP_main$normal2mci_vs_prev) +
+  (line_plot_ES_corr_main$normal2mci_vs_prev + line_plot_ES_corr_main$normal2mci_vs_normal2incid) +
+  plot_layout(ncol = 1, heights = c(2, 2, 3), guides = "collect", axes = "collect", axis_titles = "collect") +
+  plot_annotation(tag_levels = "a")
+
+ggsave(here("normal2mci_focused/patch_figures/output/fig_normal2mci.png"),
+       fig_normal2mci,
+       width = 6.5, height = 6.5, dpi = 600, bg = "white",
+       device = grDevices::png)
+```
+
+## Verify output
+
+```{r}
+#| label: verify-output
+
+output_files <- fs::dir_ls(
+  here("normal2mci_focused/patch_figures/output"),
+  glob = "*fig_normal2mci*"
+)
+fs::file_info(output_files) |>
+  select(path, size, modification_time) |>
+  mutate(path = basename(path))
+```

@@ -1,0 +1,153 @@
+---
+title: "Supplemental figures for the manuscript"
+---
+
+## Overview
+
+This document compiles supplementary figures for the dementia EWAS manuscript.
+
+{{< pagebreak >}}
+
+![](/dmp/patch_figures/output/fig_suppl_5_manhattan.png){#suppfig-manhattan width="100%"}
+
+**[@suppfig-manhattan]** | **Manhattan plot of genome-wide DNA methylation associations across dementia transitions.** The plot displays −log~10~(*P*-values) for CpG sites across chromosomes 1–22. Each point represents an individual CpG site. The red dashed horizontal line indicates the genome-wide significance threshold (*P* = 1 × 10^−8^). Diamond-shaped markers highlight representative CpG sites exceeding this threshold, with colors indicating dementia transition types: normal to MCI (normal2mci), stable MCI (stable_mci), normal to incident dementia (normal2incid), MCI to incident dementia (mci2incid), and prevalent dementia (prev). Gene symbols for these CpG sites are annotated above the plot, together with potential neurological relevance inferred from their known gene functions.
+
+{{< pagebreak >}}
+
+![](/normal2mci_focused/patch_figures/output/fig_sup_normal2incid_DMP.png){#suppfig-normal2incid_DMP width="100%"}
+
+**[@suppfig-normal2incid_DMP]** | **Effect size comparison between normal2incid and other dementia transitions for genome-wide significant DMPs.** Scatter plots of effect sizes for the normal2incid transition (x-axis) against other transitions (y-axis) for differentially methylated positions (DMPs) at *P* < 1.0 × 10⁻⁸. Each point represents an individual CpG site, with blue lines indicating the linear regression fit. Spearman correlation coefficients (*r*) and *P*-values (in red) are shown for each comparison. A few CpG sites were removed as outliers. *P* = 0 denotes *P*-values that exceed double-precision floating-point limits (approximately < 5 × 10^−324^).
+
+{{< pagebreak >}}
+
+![](/normal2mci_focused/patch_figures/output/fig_sup_normal2incid_extended_DMP.png){#suppfig-normal2incid_extended_DMP width="100%"}
+
+**[@suppfig-normal2incid_extended_DMP]** | **Effect size association with normal2incid transition for extended DMPs.** The effect size of normal2incid transition exhibits significant positive correlation with mci2incid transitions for the extended DMPs, i.e., the CpG sites that passed less stringent association thresholds of $1.0 \times 10^{-7}$, $1.0 \times 10^{-6}$, or $1.0 \times 10^{-5}$ (**a**), while it exhibits significant negative correlation with normal2mci transition for the extended DMPs (**b**). Each point represents an individual CpG site, with blue lines indicating the linear regression fit. Spearman's rank correlation coefficients (r) and their corresponding p-values (in red) are shown for each comparison. The number of extended DMPs is shown at the top under the indicated association threshold. A few CpG sites were removed as outliers. *P* = 0 denotes *P*-values that exceed double-precision floating-point limits (approximately < 5 × 10^−324^).
+
+{{< pagebreak >}}
+
+![](/normal2mci_focused/patch_figures/output/fig_sup_mci2incid_extended_DMP.png){#suppfig-mci2incid_extended_DMP width="100%"}
+
+**[@suppfig-mci2incid_extended_DMP]** | **Effect size association with mci2incid transition for extended DMPs.** The effect size of mci2incid transition exhibits significant positive correlation with prevalent dementia for the extended DMPs, i.e., the CpG sites that passed less stringent association thresholds of $1.0 \times 10^{-7}$, $1.0 \times 10^{-6}$, or $1.0 \times 10^{-5}$ (**a**), while it exhibits significant negative correlation with normal2mci transition for the extended DMPs (**b**). Each point represents an individual CpG site, with blue lines indicating the linear regression fit. Spearman's rank correlation coefficients (r) and their corresponding p-values (in red) are shown for each comparison. The number of CpG sites (n) included in each analysis is indicated at the top of each panel under the specified association threshold. A few CpG sites were removed as outliers. *P* = 0 denotes *P*-values that exceed double-precision floating-point limits (approximately < 5 × 10^−324^).
+
+{{< pagebreak >}}
+
+![](/normal2mci_focused/patch_figures/output/fig_sup_ES_corr_mci2incid_normal2mci.png){#suppfig-ES_corr_mci2incid_normal2mci width="100%"}
+
+**[@suppfig-ES_corr_mci2incid_normal2mci]** | **Effect size association with mci2incid and normal2mci transition.** Association cutoffs from the least stringency, $1.0 \times 10^{-0}$, i.e., use all CpG sites, to the highest stringency, $1.0 \times 10^{-10}$, are used to select the CpG sites; Spearman's rank correlation coefficients are computed against mci2incid or normal2mci transition using prevalent dementia (red), normal2incid (green), and stable_mci (blue).
+
+{{< pagebreak >}}
+
+![](/stable_mci_focused/patch_figures/output/fig_sup_stable_mci_DMP.png){#suppfig-stable_mci_DMP width="100%"}
+
+**[@suppfig-stable_mci_DMP]** | **Effect size comparison between stable_mci and other dementia transitions for genome-wide significant DMPs.** Scatter plots of effect sizes for the stable MCI group (x-axis) against the other transitions (y-axis) for differentially methylated positions (DMPs) at *P* < 1.0 × 10⁻⁸. The 403 DMPs separate into a main group (n = 343) and an outlier group (n = 60), the latter defined by a strongly negative stable_mci effect size (< −0.2). Each point represents an individual CpG site, with lines indicating the linear regression fit within each group. Spearman's rank correlation coefficients (*r*) and their corresponding *P*-values are shown along each fitted line. The outlier group shows no significant correlation with any other transition. A few extreme CpG sites were excluded from the display. *P* = 0 denotes *P*-values that exceed double-precision floating-point limits (approximately < 5 × 10^−324^).
+
+{{< pagebreak >}}
+
+![](/stable_mci_focused/patch_figures/output/fig_sup_stable_mci_extended_prev.png){#suppfig-stable_mci_extended_prev width="100%"}
+
+**[@suppfig-stable_mci_extended_prev]** | **Effect size association between stable_mci and prevalent dementia for extended DMPs.** The effect size of the stable MCI group exhibits a significant positive correlation with prevalent dementia for the main group of extended DMPs, i.e., the CpG sites that passed less stringent association thresholds of $1.0 \times 10^{-5}$, $1.0 \times 10^{-6}$, or $1.0 \times 10^{-7}$, whereas the outlier group (stable_mci effect size < −0.2) shows no correlation at any threshold. Each point represents an individual CpG site, with lines indicating the linear regression fit within each group. The number of CpG sites (n) included in each analysis is indicated at the top of each panel under the specified association threshold. Spearman's rank correlation coefficients (*r*) and their corresponding *P*-values are shown along each fitted line. A few extreme CpG sites were excluded from the display. *P* = 0 denotes *P*-values that exceed double-precision floating-point limits (approximately < 5 × 10^−324^).
+
+{{< pagebreak >}}
+
+![](/stable_mci_focused/patch_figures/output/fig_sup_stable_mci_extended_transitions.png){#suppfig-stable_mci_extended_transitions width="100%"}
+
+**[@suppfig-stable_mci_extended_transitions]** | **Effect size association between stable_mci and the other dementia transitions for extended DMPs.** As in [@suppfig-stable_mci_extended_prev], but comparing the stable MCI effect size against the normal2incid (**a**), mci2incid (**b**) and normal2mci (**c**) transitions for the CpG sites that passed less stringent association thresholds of $1.0 \times 10^{-5}$, $1.0 \times 10^{-6}$, or $1.0 \times 10^{-7}$. The main group correlates significantly with every transition at every threshold, whereas the outlier group (stable_mci effect size < −0.2) does not. Each point represents an individual CpG site, with lines indicating the linear regression fit within each group. The number of CpG sites (n) included in each analysis is indicated at the top of each panel under the specified association threshold. Spearman's rank correlation coefficients (*r*) and their corresponding *P*-values are shown along each fitted line. *P* = 0 denotes *P*-values that exceed double-precision floating-point limits (approximately < 5 × 10^−324^).
+
+{{< pagebreak >}}
+
+![](/VAE_UMAP_comb/patch_figures/output/fig_suppl_vae_methodology.png){#suppfig-vae-methodology width="100%"}
+
+**[@suppfig-vae-methodology]** | **Methodology of the regularized Variational Autoencoder (VAE) for methylation embedding.** **a,** Schematic representation of the deep generative model architecture. The encoder network reduces input dimensionality through four dense layers (512, 256, 128, 64 units), each with batch normalization, ReLU activation, and dropout (0.05–0.1). The probabilistic latent space captures a 6-dimensional representation using $z_{mean}$ and $z_{log\_var}$ parameters with the reparameterization trick ($\beta = 0.001$). The symmetric decoder reconstructs the original methylation patterns. **b,** 5-fold stratified cross-validation framework. The dataset is partitioned into five stratified subsets based on dementia transition categories (normal2mci, stable_mci, normal2incid, mci2incid, and prevalent dementia). In each iteration, four subsets are used for VAE training and one for validation to prevent overfitting and ensure model robustness. Final embeddings represent an average ensemble across all five folds.
+
+{{< pagebreak >}}
+
+![](/VAE_UMAP_comb/patch_figures/output/fig_suppl_vae_boxplot_threshold7.png){#suppfig-vae-boxplot-t7 width="100%"}
+
+**[@suppfig-vae-boxplot-t7]** | **VAE latent dimension distributions at EWAS threshold *P* < 1.0 $\times$ 10^-7^ (949 CpGs).** **a,** Boxplots comparing all six VAE dimensions between cognitively stable subjects and those with prevalent dementia, with t-test *P*-values showing in red. **b,** Same comparison for stable MCI, showing minimal separation from stable normal.
+
+{{< pagebreak >}}
+
+![](/VAE_UMAP_comb/patch_figures/output/fig_suppl_vae_boxplot_one_dim_threshold7.png){#suppfig-vae-boxplot-one-dim-t7 width="65%"}
+
+**[@suppfig-vae-boxplot-one-dim-t7]** | **Individual VAE dimensions across the dementia progression ordering at threshold *P* < 1.0 $\times$ 10^-7^ (949 CpGs).** The two dimensions reaching ANOVA significance (VAE_1, VAE_2) are shown, with boxplots across all six dementia trajectory categories and ANOVA *P*-values per dimension; their values changed monotonically across the ordering. The remaining four dimensions did not reach significance and are not shown.
+
+{{< pagebreak >}}
+
+![](/VAE_UMAP_comb/patch_figures/output/fig_suppl_umap_boxplot_threshold8.png){#suppfig-umap-boxplot-t8 width="100%"}
+
+**[@suppfig-umap-boxplot-t8]** | **UMAP latent dimension distributions at EWAS threshold *P* < 1.0 $\times$ 10^-8^ (403 CpGs).** **a,** Boxplots comparing all six UMAP dimensions between cognitively stable subjects and those with prevalent dementia, with t-test *P*-values showing in red. **b,** Same comparison for stable MCI, showing minimal separation from stable normal.
+
+{{< pagebreak >}}
+
+![](/VAE_UMAP_comb/patch_figures/output/fig_suppl_umap_boxplot_threshold7.png){#suppfig-umap-boxplot-t7 width="100%"}
+
+**[@suppfig-umap-boxplot-t7]** | **UMAP latent dimension distributions at EWAS threshold *P* < 1.0 $\times$ 10^-7^ (949 CpGs).** **a,** Boxplots comparing all six UMAP dimensions between cognitively stable subjects and those with prevalent dementia, with t-test *P*-values showing in red. **b,** Same comparison for stable MCI versus stable normal.
+
+{{< pagebreak >}}
+
+![](/VAE_UMAP_comb/patch_figures/output/fig_suppl_umap_boxplot_one_dim_threshold7.png){#suppfig-umap-boxplot-one-dim-t7 width="100%"}
+
+**[@suppfig-umap-boxplot-one-dim-t7]** | **Selected individual UMAP dimensions showing gradual changes across the dementia progression ordering at threshold *P* < 1.0 $\times$ 10^-7^ (949 CpGs).** Four dimensions (UMAP_1, UMAP_2, UMAP_3, UMAP_5) exhibiting the strongest ANOVA significance are shown, with boxplots across all six dementia trajectory categories and ANOVA *P*-values per dimension.
+
+{{< pagebreak >}}
+
+![](/VAE_UMAP_comb/patch_figures/output/fig_suppl_vae_scatter_t8_part1.png){#suppfig-vae-scatter-t8-p1 width="100%"}
+
+**[@suppfig-vae-scatter-t8-p1]** | **VAE dimension pair scatter contour and trajectory plots for threshold *P* < 1.0 $\times$ 10^-8^ (403 CpGs), part 1.** Each row shows a dimension pair ranked by DPS. Left: 2D kernel density contour plot showing subject distribution across five dementia transition groups, with blue contours for stable normal and orange for dementia. Right: density-weighted contour center trajectory connecting the cognitive decline path from normal2mci through prev_dementia. Ranks 3-5 are shown (ranks 1-2 appear in the main figure).
+
+{{< pagebreak >}}
+
+![](/VAE_UMAP_comb/patch_figures/output/fig_suppl_umap_scatter_t8_part1.png){#suppfig-umap-scatter-t8-p1 width="100%"}
+
+**[@suppfig-umap-scatter-t8-p1]** | **UMAP dimension pair scatter contour and trajectory plots for threshold *P* < 1.0 $\times$ 10^-8^ (403 CpGs), part 1.** Ranks 3-5 by DPS. Layout as in @suppfig-vae-scatter-t8-p1 but using UMAP-derived dimensions. Ranks 1-2 appear in the main figure.
+
+{{< pagebreak >}}
+
+![](/VAE_UMAP_comb/patch_figures/output/fig_suppl_umap_scatter_t8_part2.png){#suppfig-umap-scatter-t8-p2 width="100%"}
+
+**[@suppfig-umap-scatter-t8-p2]** | **UMAP dimension pair scatter contour and trajectory plots for threshold *P* < 1.0 $\times$ 10^-8^ (403 CpGs), part 2.** Ranks 6-8 by DPS.
+
+{{< pagebreak >}}
+
+![](/VAE_UMAP_comb/patch_figures/output/fig_suppl_vae_null_distribution.png){#suppfig-vae-null-dist width="100%"}
+
+**[@suppfig-vae-null-dist]** | **VAE null distribution of DPS at THR8.** Permutation-based null distributions for DPS across VAE dimension pairs at threshold *P* < 1.0 × 10⁻⁸ (403 CpGs). Vertical lines indicate observed DPS values. Permutation *P*-values assess whether observed trajectory scores exceed those expected under random shuffling, which breaks the linkage between dementia transition categories and CpG site methylation.
+
+{{< pagebreak >}}
+
+![](/VAE_UMAP_comb/patch_figures/output/fig_suppl_umap_null_distribution.png){#suppfig-umap-null-dist width="100%"}
+
+**[@suppfig-umap-null-dist]** | **UMAP null distribution of DPS at THR8.** Permutation-based null distributions for DPS across UMAP dimension pairs at threshold *P* < 1.0 × 10⁻⁸ (403 CpGs). Vertical lines indicate observed DPS values. Layout identical to @suppfig-vae-null-dist.
+
+{{< pagebreak >}}
+
+![](/VAE_UMAP_comb/patch_figures/output/fig_suppl_perm_heatmap.png){#suppfig-perm-heatmap width="100%"}
+
+**[@suppfig-perm-heatmap]** | **Permutation *P*-values for the dementia progression score (DPS) of every latent dimension pair.** Each cell gives the empirical *P*-value — the fraction of 1,000 permutations whose DPS equalled or exceeded the observed value — printed to three decimals. Tile fill shades from dark red at *P* = 0 through light salmon at the *P* = 0.05 significance threshold to white at *P* = 1, so more significant pairs appear redder; the cell number is printed in white where the pair is significant (*P* < 0.05) and in black where it is not (*P* ≥ 0.05). Rows are the 15 dimension pairs (e.g., dim_1 vs dim_2), where dim_1 corresponds to UMAP_1 in the UMAP columns and VAE_1 in the VAE columns; the four columns are the UMAP and VAE methods at THR8 (*P* < 1.0 × 10⁻⁸) and THR7 (*P* < 1.0 × 10⁻⁷).
+
+{{< pagebreak >}}
+
+![](/APOE/patch_figures/output/fig_suppl_apoe_boxplot.png){#suppfig-apoe-boxplot-t7 width="100%"}
+
+**[@suppfig-apoe-boxplot-t7]** | **APOE genotype effects on methylation-derived latent dimensions at THR7 (949 CpGs).** Boxplots showing the distribution of the five latent dimensions that differed significantly by APOE functional role (UMAP_2, UMAP_1, UMAP_3, VAE_1, VAE_2; Kruskal-Wallis *P* < 0.05) across six APOE genotypes (ε2/ε2, ε2/ε3, ε3/ε3, ε2/ε4, ε3/ε4, ε4/ε4) in 2,487 subjects, arranged in a 1 × 5 grid. Genotypes are grouped by functional role: Protective (ε2/ε2, ε2/ε3), Neutral (ε3/ε3), and Detrimental (ε2/ε4, ε3/ε4, ε4/ε4), indicated by color-coded background bars. Kruskal-Wallis test *P*-values, computed across the three functional role groups, are shown in red at the top of each panel; orange annotations indicate median values for each genotype.
+
+{{< pagebreak >}}
+
+![](/pathway_analysis/01_genes/output/fig_sup_pval_with_top_genes_plot.png){#suppfig-pval-with-top-genes width="100%"}
+
+**[@suppfig-pval-with-top-genes]** | **Statistical significance distribution of top-ranked CpG sites across dementia transitions.** For each dementia transition, CpG sites are ranked by association strength (−log~10~ *P*-value) and the top 2,000 sites are plotted. Red diamonds highlight the 1st, 1,000th, and 2,000th ranked CpG sites with their −log~10~ *P*-values annotated. The dashed blue line indicates the genome-wide significance threshold (*P* = 1.0 × 10^−8^), with the number of CpG sites exceeding this threshold shown in blue text.
+
+{{< pagebreak >}}
+
+![](/pathway_analysis/05_patch_fig_and_make_table/output/fig_sup_upset_top2000_genes_and_GO_terms.png){#suppfig-upset-top2000 width="100%"}
+
+**[@suppfig-upset-top2000]** | **Overlap analysis of genes and GO terms for the top 2,000 CpG sites across dementia transitions.** **a.** UpSet plot showing the intersection of genes associated with the top 2,000 CpG sites across dementia transitions. The left bars show the total number of genes for each transition, while the vertical bars show the size of gene intersections, with connected dots below indicating which transitions contribute to each intersection; intersections of fewer than 110 genes are not shown. **b.** UpSet plot depicting the overlap of significantly enriched Gene Ontology (GO) biological process terms across transitions. As in panel a, the left bars indicate the total number of terms per transition and the vertical bars the size of term intersections; intersections of fewer than 5 terms are not shown.
+
+{{< pagebreak >}}
+
+![](/pathway_analysis/05_patch_fig_and_make_table/output/fig_sup_barplot_top2000_function_categorization.png){#suppfig-barplot-top2000 width="100%"}
+
+**[@suppfig-barplot-top2000]** | **Distribution of biological function categories among significantly enriched GO terms for top 2000 CpG sites.** The barplot shows the distribution of functional categories among significantly enriched Gene Ontology (GO) terms for each dementia transition. Similar GO terms are grouped into functional categories. Bar heights represent the percentage of GO terms in each dementia transition for a functional category, with numbers above bars indicating the count of GO terms in that category. The analysis using top 2000 CpG sites confirms the functional distribution patterns observed with the top 1000 sites, demonstrating the consistency of biological processes involved across different stages of dementia progression.
+
+{{< pagebreak >}}

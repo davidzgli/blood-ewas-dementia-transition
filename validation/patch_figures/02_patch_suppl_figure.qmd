@@ -1,0 +1,162 @@
+---
+title: "Patch supplementary figures"
+editor_options:
+  chunk_output_type: console
+---
+
+## Overview
+
+This document patches supplementary figures for the manuscript by removing titles/subtitles and adjusting formatting for consistency. Includes ADNI/AIBL scatter plots and CSF biomarker comparisons.
+
+```{r}
+#| label: load-packages
+#| echo: false
+
+# Additional packages (tidyverse, here, glue loaded via .Rprofile)
+pacman::p_load(ggtext, ragg, install = FALSE)
+knitr::opts_chunk$set(dev = "ragg_png")
+
+source(here("custom_func/theme_main_fig.R"))
+set_pub_geom_defaults()
+```
+
+## Load Plot Objects
+
+Load pre-generated plot objects from validation and DMP analyses.
+
+```{r}
+#| label: load-plots
+
+# Supplementary Fig 1: ADNI/AIBL scatter
+fig_adni_aibl <- read_rds(
+ here("validation/output/fig_validation_ADNI_AIBL_scatter_three_transitions.rds")
+)
+
+# Supplementary Fig 2: CSF pTau scatter
+fig_csf_ptau <- read_rds(
+ here("validation/output/fig_validation_CSF_pTau_CN_scatter_three_transitions.rds")
+)
+
+# Supplementary Fig 3: CSF Total Tau scatter
+fig_csf_total_tau <- read_rds(
+ here("validation/output/fig_validation_CSF_total_Tau_CN_scatter_three_transitions.rds")
+)
+```
+
+## Patch Supplementary Fig 1 (ADNI/AIBL)
+
+Remove title and subtitle only.
+
+```{r}
+#| label: patch-fig1
+
+fig_adni_aibl_patched <- fig_adni_aibl +
+ labs(
+   title = NULL,
+   subtitle = NULL
+ ) +
+ theme(
+   strip.text.x = element_textbox_simple(size = 9, halign = 0.5, lineheight = 1.2, margin = margin(10, 4, 4, 4)),
+   strip.text.y = element_textbox_simple(size = 8, halign = 0.5, orientation = "right-rotated", lineheight = 1.2, margin = margin(4, 10, 4, 4))
+ )
+fig_adni_aibl_patched <- rescale_layer_params(fig_adni_aibl_patched, size_scale = 0.6, linewidth_scale = 0.6)
+```
+
+## Patch Supplementary Fig 2 (CSF pTau)
+
+Update y-axis title and remove title/subtitle.
+
+```{r}
+#| label: patch-fig2
+
+fig_csf_ptau_patched <- fig_csf_ptau +
+ labs(
+   y = "Effect size of CSF pTau (CN) <br> <span style='font-size:9pt; color:#333333'>(N<sub>Subjects</sub> = 123)</span>",
+   title = NULL,
+   subtitle = NULL
+ ) +
+ theme(
+   strip.text.x = element_textbox_simple(size = 9, halign = 0.5, lineheight = 1.2, margin = margin(10, 4, 4, 4)),
+   strip.text.y = element_textbox_simple(size = 8, halign = 0.5, orientation = "right-rotated", lineheight = 1.2, margin = margin(4, 10, 4, 4))
+ )
+fig_csf_ptau_patched <- rescale_layer_params(fig_csf_ptau_patched, size_scale = 0.6, linewidth_scale = 0.6)
+```
+
+## Patch Supplementary Fig 3 (CSF Total Tau)
+
+Update y-axis title and remove title/subtitle.
+
+```{r}
+#| label: patch-fig3
+
+fig_csf_total_tau_patched <- fig_csf_total_tau +
+ labs(
+   y = "Effect size of CSF Total Tau (CN) <br> <span style='font-size:9pt; color:#333333'>(N<sub>Subjects</sub> = 123)</span>",
+   title = NULL,
+   subtitle = NULL
+ ) +
+ theme(
+   strip.text.x = element_textbox_simple(size = 9, halign = 0.5, lineheight = 1.2, margin = margin(10, 4, 4, 4)),
+   strip.text.y = element_textbox_simple(size = 8, halign = 0.5, orientation = "right-rotated", lineheight = 1.2, margin = margin(4, 10, 4, 4))
+ )
+fig_csf_total_tau_patched <- rescale_layer_params(fig_csf_total_tau_patched, size_scale = 0.6, linewidth_scale = 0.6)
+```
+
+## Save Patched Figures
+
+Export all patched supplementary figures as high-resolution PNG files.
+
+```{r}
+#| label: save-figures
+
+fs::dir_create(here("validation/patch_figures/output"))
+
+# Save Supplementary Fig 1
+ggsave(
+ here("validation/patch_figures/output/fig_suppl_1_ADNI_AIBL_scatter.png"),
+ fig_adni_aibl_patched,
+ width = 6.5,
+ height = 8.1,
+ dpi = 600,
+ bg = "white",
+ device = ragg::agg_png
+)
+
+# Save Supplementary Fig 2
+ggsave(
+ here("validation/patch_figures/output/fig_suppl_2_CSF_pTau_scatter.png"),
+ fig_csf_ptau_patched,
+ width = 6.5,
+ height = 8.1,
+ dpi = 600,
+ bg = "white",
+ device = ragg::agg_png
+)
+
+# Save Supplementary Fig 3
+ggsave(
+ here("validation/patch_figures/output/fig_suppl_3_CSF_total_Tau_scatter.png"),
+ fig_csf_total_tau_patched,
+ width = 6.5,
+ height = 8.1,
+ dpi = 600,
+ bg = "white",
+ device = ragg::agg_png
+)
+
+message("Patched supplementary figures saved to validation/patch_figures/output/")
+```
+
+## Verify Output
+
+List all output files with their sizes and modification times.
+
+```{r}
+#| label: verify-output
+
+output_files <- fs::dir_ls(here("validation/patch_figures/output"), glob = "*.png")
+file_info <- fs::file_info(output_files)
+file_info |>
+ select(path, size, modification_time) |>
+ mutate(path = basename(path))
+```

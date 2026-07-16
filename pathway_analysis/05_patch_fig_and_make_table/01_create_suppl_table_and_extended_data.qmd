@@ -1,0 +1,239 @@
+---
+title: "Supplemental table and extended data for the manuscript"
+---
+
+## Load Packages
+
+Load necessary R packages for data manipulation, visualization, and GO analysis.
+
+```{r}
+#| label: load-packages
+#| message: false
+#| warning: false
+
+pacman::p_load(readxl, gt, patchwork, install = FALSE)
+
+conflicted::conflict_prefer_all("dplyr", quiet = TRUE)
+```
+
+## Set the top number
+
+```{r}
+top_n <- 1000
+```
+
+## Load Data
+
+### GO enrichment results
+
+Read the previously saved GO enrichment results for top CpG sites.
+
+```{r}
+#| label: load-results
+#| message: false
+
+all_GO_results <- read_rds(here(glue("pathway_analysis/02_gene_ontology/output/top{top_n}_all_GO_results.rds"))) |>
+  mutate(condition = factor(
+    condition, 
+    levels = c("normal2mci", "stable_mci", "normal2incid", "mci2incid", "prev")
+  ))
+
+
+glimpse(all_GO_results)
+```
+
+### Function categorization
+
+Read the keyword-based function categorization of the top condition-specific GO terms,
+written by `04_function_categorization/01_assign_function_category.qmd`.
+
+```{r}
+#| label: load-data
+#| message: false
+
+function_categorization <- 
+  # read_csv(here(glue::glue("pathway_analysis/04_function_categorization/output/top{top_n}_condition_specific_GO_terms_cat_modified.csv"))) |>
+  read_excel(
+    # here::here("data", glue::glue("top{top_n}_condition_specific_GO_terms_cat.xlsx")),
+    # here(glue("data/publicly_available/top{top_n}_condition_specific_GO_terms_cat.xlsx")),
+    here(glue("pathway_analysis/04_function_categorization/output/top{top_n}_condition_specific_GO_terms_auto_cat.xlsx")),
+    # sheet = "func_cat",
+  ) |>
+mutate(condition = fct_relevel(condition, "normal2mci", "stable_mci", "normal2incid", "mci2incid", "prev")) #|>
+  # Remove function_category column
+  # select(-function_category) |>
+  # Rename function_category to function_category
+  # rename(function_category = function_category)
+
+glimpse(function_categorization)
+```
+
+## Significant GO terms
+
+```{r}
+significant_GO_terms <- all_GO_results |>
+  filter(p.adjust < 0.05)
+
+glimpse(significant_GO_terms)
+```
+
+## Condition-specific GO terms
+
+```{r}
+condition_specific_GO_terms <- significant_GO_terms |>
+  add_count(ID, name = "n_condition") |>
+  mutate(condition_specific = if_else(n_condition == 1, "Yes", "No"))
+
+glimpse(condition_specific_GO_terms)
+```
+
+## Frequency of shared GO terms
+
+```{r}
+condition_specific_GO_terms |>
+  group_by(n_condition) |>
+  summarise(n_GO = n_distinct(ID)) |>
+  rename(n_shared_condition = n_condition) |>
+  gt() |>
+  tab_header(title = "Frequency of shared GO terms")
+```
+
+
+## Attach function categorization to GO enrichment results
+
+```{r}
+condition_specific_GO_terms_with_category <- condition_specific_GO_terms |>
+  left_join(select(function_categorization, ID, condition, function_category), by = c("ID", "condition"))
+
+glimpse(condition_specific_GO_terms_with_category)
+```
+
+## Create tables
+
+### Intialize a list to store the tables
+
+```{r}
+tbl_list <- list()
+```
+
+### Create a function to create the tables
+
+```{r}
+#| label: create-table-function
+
+
+create_table <- function(condition, function_category_filter = NULL) {
+  # Filter and select relevant columns
+  formatted_data <- condition_specific_GO_terms_with_category |>  
+    filter(condition == .env$condition, condition_specific == "Yes") |>
+    filter(if (!is.null(function_category_filter)) function_category %in% function_category_filter else TRUE) |>
+    select(ID, Description, p.adjust, function_category) |>
+    arrange(function_category, p.adjust)
+    
+  # Create and format GT table
+  formatted_data |>
+    gt() |>
+    # Format numeric columns
+    fmt_number(
+      columns = p.adjust, 
+      decimals = 3
+    ) |>
+    # Style headers and labels
+    tab_style(
+      style = cell_text(weight = "bold"),
+      locations = list(
+        cells_column_labels(),
+        cells_title()
+      )
+    ) |>
+    # Customize column labels  
+    cols_label(
+      ID = "GO ID",
+      Description = "Description", 
+      p.adjust = md("*P.adj*"),
+      function_category = "Function Category"
+    ) |>
+    # Add title and footnotes
+    tab_header(
+      title = paste0(condition, "-specific GO terms")
+    ) |>
+    tab_footnote(
+      footnote = "Fisher one-sided test adjusted by BH method",
+      locations = cells_column_labels(columns = p.adjust)
+    )
+}
+
+
+```
+
+### Normal2MCI-1
+
+```{r}
+tbl_list$normal2mci_1 <- create_table("normal2mci", function_category_filter = c("Immune Response", "Synaptic Function and Organization", "Extracellular Matrix Organization"))
+
+tbl_list$normal2mci_1
+```
+
+### Normal2MCI-2
+
+```{r}
+tbl_list$normal2mci_2 <- create_table("normal2mci", function_category_filter = c("Neural Development and Regulation"))
+
+tbl_list$normal2mci_2
+```
+
+### Normal2MCI-3
+
+```{r}
+tbl_list$normal2mci_3 <- create_table("normal2mci", function_category_filter = c("Ion Transport and Regulation"))
+
+tbl_list$normal2mci_3
+```
+
+### Stable MCI
+
+```{r}
+tbl_list$stable_mci <- create_table("stable_mci")
+
+tbl_list$stable_mci
+```
+
+
+### Normal2Incident
+
+```{r}
+tbl_list$normal2incid <- create_table("normal2incid")
+
+tbl_list$normal2incid
+```
+
+
+### MCI2Incident
+
+```{r}
+tbl_list$mci2incid <- create_table("mci2incid")
+
+tbl_list$mci2incid
+```
+
+
+### Prevalent
+
+```{r}
+tbl_list$prev <- create_table("prev")
+
+tbl_list$prev
+```
+
+
+## Save the tables
+
+```{r}
+#| label: save-tables
+fs::dir_create(here("pathway_analysis/05_patch_fig_and_make_table/output"))
+# GT tables
+write_rds(tbl_list, here(glue("pathway_analysis/05_patch_fig_and_make_table/output/top{top_n}_condition_specific_GO_terms_gt_tables.rds")))
+
+# Extended data
+write_rds(condition_specific_GO_terms_with_category, here(glue("pathway_analysis/05_patch_fig_and_make_table/output/top{top_n}_condition_specific_GO_terms_extended_data.rds")))
+```

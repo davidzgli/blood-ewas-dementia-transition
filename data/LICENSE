@@ -1,0 +1,38 @@
+Data licence: Creative Commons Attribution 4.0 International (CC BY 4.0)
+
+SCOPE
+
+  This licence applies ONLY to the files in data/publicly_available/:
+
+    - association_nlog10_p_value_lgeq5_wide.rds
+    - correlation_among_demcats_various_pval_cutoffs_stable_mci_lump.rds
+
+  It does NOT apply to:
+
+    - the analysis code, which is MIT-licensed (see ../LICENSE)
+    - data/collaborator_only/, data/private/, data/upon_request/ -- not
+      distributed here; governed by the applicable Data Use Agreements
+    - data/published_data/ -- third-party data we do not hold rights to.
+      Obtain those files from their original sources and follow their terms.
+
+LICENCE
+
+  These data files are licensed under the Creative Commons Attribution 4.0
+  International License. You are free to share and adapt the material for any
+  purpose, including commercially, provided you give appropriate credit.
+
+  To view a copy of this licence, visit:
+
+    https://creativecommons.org/licenses/by/4.0/
+
+  The full legal code is at:
+
+    https://creativecommons.org/licenses/by/4.0/legalcode
+
+ATTRIBUTION
+
+  Li Z, Asefa N, Martinez Romero J, Meirelles O, Mbangdadji D, Moore AZ,
+  Lopez OL, Ferrucci L, Gudmundsdottir V, Gudnason V, Launer LJ.
+  "Blood DNA methylation traces a continuous epigenetic trajectory across
+  stages of dementia progression." AGES-Reykjavik Study.
+  (Citation to be finalised on acceptance.)

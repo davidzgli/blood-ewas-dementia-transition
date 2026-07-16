@@ -1,0 +1,40 @@
+cff-version: 1.2.0
+message: "If you use this software or data, please cite the following."
+title: "Blood DNA methylation traces a continuous epigenetic trajectory across stages of dementia progression"
+abstract: >-
+  Analysis code and manuscript sources for an epigenome-wide association study
+  of blood DNA methylation and dementia progression in the AGES-Reykjavik
+  cohort (n = 2,491).
+type: software
+license: MIT
+repository-code: "https://github.com/davidzgli/blood-ewas-dementia-transition"
+authors:
+  - family-names: Li
+    given-names: Zhiguang
+  - family-names: Asefa
+    given-names: Nigus
+  - family-names: Martinez Romero
+    given-names: Jorge
+  - family-names: Meirelles
+    given-names: Osorio
+  - family-names: Mbangdadji
+    given-names: Djassinabaye
+  - family-names: Moore
+    given-names: Ann Zenobia
+  - family-names: Lopez
+    given-names: Oscar L.
+  - family-names: Ferrucci
+    given-names: Luigi
+  - family-names: Gudmundsdottir
+    given-names: Valborg
+  - family-names: Gudnason
+    given-names: Vilmundur
+  - family-names: Launer
+    given-names: Lenore J.
+keywords:
+  - DNA methylation
+  - dementia
+  - epigenome-wide association study
+  - AGES-Reykjavik
+  - variational autoencoder
+# On acceptance: add a preferred-citation block with journal, doi, year, volume.

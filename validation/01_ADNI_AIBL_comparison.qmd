@@ -1,0 +1,583 @@
+---
+title: "Validation: AGES vs ADNI/AIBL Meta-Analysis"
+params:
+  quartile_cutoff: 0.95
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r}
+#| label: load-packages
+#| echo: false
+
+# Additional packages (tidyverse, here, janitor, glue loaded via .Rprofile)
+pacman::p_load(readxl, ggtext, scales, install = FALSE)
+
+conflicted::conflict_prefer_all("dplyr", quiet = TRUE)
+
+# Create output directory
+fs::dir_create(here("validation/output"))
+```
+
+```{r}
+#| label: helper-functions
+#| echo: false
+
+source(here("custom_func/display_scientific_notation.R"))
+```
+
+## Introduction
+
+This analysis compares DNA methylation effect sizes from the AGES cohort (n=2,491) with a whole-genome meta-analysis of ADNI and AIBL studies (n=797).
+
+**Analysis parameters:** Quartile cutoff = `r params$quartile_cutoff`
+
+## Load Data
+
+### AGES cohort association data
+
+```{r}
+#| label: load-ages-data
+
+asso <- read_rds(here("data/upon_request/whole_genome_wide.rds")) |>
+  rename_with(~str_replace(., "nlog10_p_value_(.*)", "\\1_p"), contains("nlog10_p_value")) |>
+  rename_with(~str_replace(., "estimate_(.*)", "\\1_es"), contains("estimate"))
+
+glimpse(asso)
+```
+
+### ADNI/AIBL meta-analysis data
+
+```{r}
+#| label: load-adni-aibl-data
+
+adni_aibl <- read_excel(
+  here("data/published_data/MIAMI_AD_database/blood_AD_ADNI_AIBL.xlsx"),
+  skip = 3
+) |>
+  clean_names() |>
+  mutate(
+    log2_or = log2(estimate),
+    neg_log10_p = -log10(pvalue)
+  )
+
+glimpse(adni_aibl)
+```
+
+## Merge Datasets
+
+```{r}
+#| label: merge-data
+
+merged_data <- asso |>
+  inner_join(adni_aibl, by = c("cg" = "cpg")) |>
+  select(
+    cg,
+    # AGES effect sizes
+    prev_es, mci2incid_es, normal2incid_es, normal2mci_es, stable_mci_es,
+    # AGES p-values
+    prev_p, mci2incid_p, normal2incid_p, normal2mci_p, stable_mci_p,
+    # ADNI/AIBL data
+    chr, pos, log2_or, pvalue, fdr, neg_log10_p
+  )
+
+cat("Number of overlapping CpGs:", nrow(merged_data), "\n")
+```
+
+## Define Significance Thresholds
+
+```{r}
+#| label: define-thresholds
+
+# Cutoff values (used to create threshold labels dynamically)
+cutoff_values <- c(4.5, 4, 3.5, 3, 2.5, 2)
+p_thresholds <- set_names(10^-cutoff_values, cutoff_values)
+```
+
+## Correlation Analysis
+
+### Prepare data for visualization
+
+```{r}
+#| label: prepare-facet-data
+
+# Create long format data for facet_grid
+facet_data <- map_dfr(names(p_thresholds), function(cutoff_value) {
+  threshold_value <- p_thresholds[[cutoff_value]]
+
+  filtered_data <- merged_data |>
+    filter(pvalue < threshold_value)
+
+  if (nrow(filtered_data) < 10) {
+    return(NULL)
+  }
+
+  n_cg <- nrow(filtered_data)
+
+  filtered_data |>
+    select(cg, log2_or, prev_es, mci2incid_es, normal2incid_es, stable_mci_es, normal2mci_es) |>
+    pivot_longer(
+      cols = ends_with("_es"),
+      names_to = "demcat",
+      values_to = "ages_effect_size"
+    ) |>
+    mutate(
+      demcat = str_remove(demcat, "_es"),
+      cutoff_value = as.numeric(cutoff_value),
+      threshold_value = threshold_value,
+      n_cpgs = n_cg,
+      # Format: Threshold: x with (N_CpG=X,XXX) on second line
+      pval_cutoff = glue(
+        "Threshold: {cutoff_value}<br><span style='font-size:6.5pt'>(N<sub>CpG</sub>={format(n_cg, big.mark = ',')})</span>"
+      )
+    )
+}) |>
+  mutate(
+    demcat = fct_relevel(demcat, "normal2incid", "mci2incid", "prev", "stable_mci", "normal2mci"),
+    pval_cutoff = fct_reorder(pval_cutoff, -cutoff_value)
+  )
+
+# Save pre-quartile-filtered facet_data for standalone directionality analysis
+write_rds(facet_data, here("validation/output/facet_data_pre_filter_ADNI_AIBL.rds"))
+
+# Apply quartile filtering per sub-dataset (cutoff_value + demcat)
+if (params$quartile_cutoff < 1) {
+  lower_q <- (1 - params$quartile_cutoff) / 2
+  upper_q <- 1 - lower_q
+
+  facet_data <- facet_data |>
+    mutate(
+      x_lower = quantile(ages_effect_size, lower_q, na.rm = TRUE),
+      x_upper = quantile(ages_effect_size, upper_q, na.rm = TRUE),
+      y_lower = quantile(log2_or, lower_q, na.rm = TRUE),
+      y_upper = quantile(log2_or, upper_q, na.rm = TRUE),
+      .by = c(cutoff_value, demcat)
+    ) |>
+    filter(
+      ages_effect_size >= x_lower & ages_effect_size <= x_upper,
+      log2_or >= y_lower & log2_or <= y_upper
+    ) |>
+    select(-x_lower, -x_upper, -y_lower, -y_upper)
+}
+
+# Create correlation labels for each facet with parsed expressions
+facet_correlations <- facet_data |>
+  summarise(
+    cor_test = list(cor.test(ages_effect_size, log2_or, method = "spearman", use = "complete.obs")),
+    n_cpgs = n_distinct(cg),
+    pval_cutoff = first(pval_cutoff),
+    .by = c(cutoff_value, demcat)
+  ) |>
+  mutate(
+    cor_estimate = map_dbl(cor_test, ~.$estimate),
+    cor_pval = map_dbl(cor_test, ~.$p.value),
+    # Parsed expression labels for italic r and P
+    cor_estimate_label = glue("italic(r) == ~{round(cor_estimate, 2)}"),
+    cor_pval_label = glue("italic(P) == ~{display_scientific_notation(cor_pval)}")
+  ) |>
+  select(-cor_test) |>
+  mutate(
+    demcat = fct_relevel(demcat, "normal2incid", "mci2incid", "prev", "stable_mci", "normal2mci"),
+    pval_cutoff = fct_reorder(pval_cutoff, -cutoff_value)
+  )
+```
+
+### Prepare directionality data
+
+```{r}
+#| label: prepare-directionality-data
+
+directionality_data <- facet_data |>
+  mutate(
+    ages_direction = sign(ages_effect_size),
+    adni_direction = sign(log2_or),
+    concordant = ages_direction == adni_direction & ages_direction != 0 & adni_direction != 0
+  ) |>
+  summarise(
+    n_total = n(),
+    n_concordant = sum(concordant, na.rm = TRUE),
+    n_discordant = n_total - n_concordant,
+    prop_concordant = n_concordant / n_total,
+    .by = c(cutoff_value, demcat, pval_cutoff)
+  )
+```
+
+### Create validation scatter plot (all 5 transitions)
+
+```{r}
+#| label: fig-altogether
+#| fig-width: 12
+#| fig-height: 14
+
+altogether_plot <- facet_data |>
+  ggplot(aes(x = ages_effect_size, y = log2_or)) +
+  geom_point(alpha = 0.3, size = 0.5) +
+  geom_smooth(method = "lm", formula = y ~ x, se = FALSE, color = "blue", linewidth = 0.8) +
+  # Correlation coefficient (r) with parsed expression
+
+  geom_label(
+    data = facet_correlations,
+    aes(label = cor_estimate_label),
+    x = I(0.05),
+    y = I(0.95),
+    hjust = 0,
+    vjust = 0.5,
+    color = "darkred",
+    fill = "grey90",
+    label.size = NA,
+    size = 4,
+    parse = TRUE
+  ) +
+  # P-value with parsed expression
+  geom_label(
+    data = facet_correlations,
+    aes(label = cor_pval_label),
+    x = I(0.05),
+    y = I(0.80),
+    hjust = 0,
+    vjust = 0.5,
+    color = "darkred",
+    fill = "grey90",
+    label.size = NA,
+    size = 4,
+    parse = TRUE
+  ) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray") +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "gray") +
+  facet_grid(
+    rows = vars(pval_cutoff),
+    cols = vars(demcat),
+    scales = "free",
+    # switch = "y"
+  ) +
+  labs(
+    x = glue("Effect size of AGES cohort <br> <span style = 'font-size:9pt'>(N<sub>Subjects</sub> = 2,491)</span>"),
+    y = "Effect size of ADNI/AIBL meta-analysis <br> <span style = 'font-size:9pt'>(N<sub>Subjects</sub> = 797)</span>",
+    title = "Whole-Genome EWAS Comparison: AGES vs ADNI/AIBL Meta-Analysis",
+    subtitle = "Correlations across dementia categories and significance thresholds"
+  ) +
+  theme(
+    axis.title.x = element_textbox(halign = 0.5),
+    axis.title.y = element_textbox(halign = 0.5, orientation = "left-rotated"),
+    strip.text.x = element_textbox_simple(halign = 0.5, lineheight = 1.2, margin = margin(8, 2, 2, 2)),
+    # strip.text.y.left = element_textbox_simple(halign = 0.5, orientation = "right-rotated", lineheight = 1.2, margin = margin(2, 8, 2, 2)),
+    strip.text.y = element_textbox_simple(halign = 0.5, orientation = "right-rotated", lineheight = 1.2, margin = margin(2, 8, 2, 2)),
+    strip.placement = "outside",
+    plot.title = element_text(size = 14, face = "bold"),
+    plot.subtitle = element_text(size = 12)
+  )
+
+print(altogether_plot)
+```
+
+### Three transitions scatter plot (all thresholds)
+
+Filter to show only prev, mci2incid, and normal2incid transitions (omitting stable_mci and normal2mci).
+
+```{r}
+#| label: fig-three-transitions
+#| fig-width: 9
+#| fig-height: 14
+
+# Filter data for three transitions
+three_transitions <- c("prev", "mci2incid", "normal2incid")
+
+facet_data_three <- facet_data |>
+  filter(demcat %in% three_transitions) |>
+  mutate(demcat = fct_drop(demcat))
+
+facet_correlations_three <- facet_correlations |>
+  filter(demcat %in% three_transitions) |>
+  mutate(demcat = fct_drop(demcat))
+
+three_transitions_plot <- facet_data_three |>
+  ggplot(aes(x = ages_effect_size, y = log2_or)) +
+  geom_point(alpha = 0.3, size = 0.5) +
+  geom_smooth(method = "lm", formula = y ~ x, se = FALSE, color = "blue", linewidth = 0.8) +
+  # Correlation coefficient (r) with parsed expression
+  geom_label(
+    data = facet_correlations_three,
+    aes(label = cor_estimate_label),
+    x = I(0.05),
+    y = I(0.95),
+    hjust = 0,
+    vjust = 0.5,
+    color = "darkred",
+    fill = "grey90",
+    label.size = NA,
+    size = 4,
+    parse = TRUE
+  ) +
+  # P-value with parsed expression
+  geom_label(
+    data = facet_correlations_three,
+    aes(label = cor_pval_label),
+    x = I(0.05),
+    y = I(0.80),
+    hjust = 0,
+    vjust = 0.5,
+    color = "darkred",
+    fill = "grey90",
+    label.size = NA,
+    size = 4,
+    parse = TRUE
+  ) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray") +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "gray") +
+  facet_grid(
+    rows = vars(pval_cutoff),
+    cols = vars(demcat),
+    scales = "free",
+    # switch = "y"
+  ) +
+  labs(
+    x = glue("Effect size of AGES cohort <br> <span style = 'font-size:9pt'>(N<sub>Subjects</sub> = 2,491)</span>"),
+    y = "Effect size of ADNI/AIBL meta-analysis <br> <span style = 'font-size:9pt'>(N<sub>Subjects</sub> = 797)</span>",
+    title = "EWAS Comparison: AGES vs ADNI/AIBL (Three Key Transitions)",
+    subtitle = "Correlations across significance thresholds"
+  ) +
+  theme(
+    axis.title.x = element_textbox(halign = 0.5),
+    axis.title.y = element_textbox(halign = 0.5, orientation = "left-rotated"),
+    strip.text.x = element_textbox_simple(halign = 0.5, lineheight = 1.2, margin = margin(8, 2, 2, 2)),
+    strip.text.y = element_textbox_simple(halign = 0.5, orientation = "right-rotated", lineheight = 1.2, margin = margin(2, 8, 2, 2)),
+    strip.placement = "outside",
+    plot.title = element_text(size = 14, face = "bold"),
+    plot.subtitle = element_text(size = 12)
+  )
+
+print(three_transitions_plot)
+```
+
+### Three transitions scatter plot (p < 1e-4.5 only)
+
+Single threshold (p < 1e-4.5) for the three key transitions.
+
+```{r}
+#| label: fig-three-transitions-p45
+#| fig-width: 9
+#| fig-height: 4
+
+# Filter data for three transitions and single threshold
+facet_data_three_p45 <- facet_data |>
+  filter(demcat %in% three_transitions, cutoff_value == 4.5) |>
+  mutate(demcat = fct_drop(demcat))
+
+facet_correlations_three_p45 <- facet_correlations |>
+  filter(demcat %in% three_transitions, cutoff_value == 4.5) |>
+  mutate(demcat = fct_drop(demcat))
+
+three_transitions_p45_plot <- facet_data_three_p45 |>
+  ggplot(aes(x = ages_effect_size, y = log2_or)) +
+  geom_point(alpha = 0.7, size = 1.0) +
+  geom_smooth(method = "lm", formula = y ~ x, se = FALSE, color = "blue", linewidth = 0.8) +
+  # Correlation coefficient (r) with parsed expression
+  geom_label(
+    data = facet_correlations_three_p45,
+    aes(label = cor_estimate_label),
+    x = I(0.05),
+    y = I(0.95),
+    hjust = 0,
+    vjust = 0.5,
+    color = "darkred",
+    fill = "grey90",
+    label.size = NA,
+    size = 4,
+    parse = TRUE
+  ) +
+  # P-value with parsed expression
+  geom_label(
+    data = facet_correlations_three_p45,
+    aes(label = cor_pval_label),
+    x = I(0.05),
+    y = I(0.80),
+    hjust = 0,
+    vjust = 0.5,
+    color = "darkred",
+    fill = "grey90",
+    label.size = NA,
+    size = 4,
+    parse = TRUE
+  ) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray") +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "gray") +
+  facet_grid(
+    rows = vars(pval_cutoff),
+    cols = vars(demcat),
+    scales = "free",
+    # switch = "y"
+  ) +
+  labs(
+    x = glue("Effect size of AGES cohort <br> <span style = 'font-size:9pt'>(N<sub>Subjects</sub> = 2,491)</span>"),
+    y = "Effect size of ADNI/AIBL meta-analysis <br> <span style = 'font-size:9pt'>(N<sub>Subjects</sub> = 797)</span>",
+    title = "EWAS Comparison: AGES vs ADNI/AIBL (Three Key Transitions, p < 1e-4.5)",
+    subtitle = "Correlations at most stringent threshold"
+  ) +
+  theme(
+    axis.title.x = element_textbox(halign = 0.5),
+    axis.title.y = element_textbox(halign = 0.5, orientation = "left-rotated"),
+    strip.text.x = element_textbox_simple(halign = 0.5, lineheight = 1.2, margin = margin(8, 2, 2, 2)),
+    strip.text.y = element_textbox_simple(halign = 0.5, orientation = "right-rotated", lineheight = 1.2, margin = margin(2, 8, 2, 2)),
+    strip.placement = "outside",
+    plot.title = element_text(size = 14, face = "bold"),
+    plot.subtitle = element_text(size = 12)
+  )
+
+print(three_transitions_p45_plot)
+```
+
+### Three transitions scatter plot (p < 1e-4.5 and p < 1e-4)
+
+Two thresholds (p < 1e-4.5 and p < 1e-4) for the three key transitions.
+
+```{r}
+#| label: fig-three-transitions-p45-p40
+#| fig-width: 9
+#| fig-height: 6
+
+# Filter data for three transitions and two thresholds
+facet_data_three_p45_p40 <- facet_data |>
+  filter(demcat %in% three_transitions, cutoff_value %in% c(4.5, 4.0)) |>
+  mutate(demcat = fct_drop(demcat))
+
+facet_correlations_three_p45_p40 <- facet_correlations |>
+  filter(demcat %in% three_transitions, cutoff_value %in% c(4.5, 4.0)) |>
+  mutate(demcat = fct_drop(demcat))
+
+three_transitions_p45_p40_plot <- facet_data_three_p45_p40 |>
+  ggplot(aes(x = ages_effect_size, y = log2_or)) +
+  geom_point(alpha = 0.7, size = 0.8) +
+  geom_smooth(method = "lm", formula = y ~ x, se = FALSE, color = "blue", linewidth = 0.6) +
+  # Correlation coefficient (r) with parsed expression
+  geom_label(
+    data = facet_correlations_three_p45_p40,
+    aes(label = cor_estimate_label),
+    x = I(0.05),
+    y = I(0.95),
+    hjust = 0,
+    vjust = 0.5,
+    color = "darkred",
+    fill = "grey90",
+    label.size = NA,
+    size = 2.2,
+    parse = TRUE
+  ) +
+  # P-value with parsed expression
+  geom_label(
+    data = facet_correlations_three_p45_p40,
+    aes(label = cor_pval_label),
+    x = I(0.05),
+    y = I(0.80),
+    hjust = 0,
+    vjust = 0.5,
+    color = "darkred",
+    fill = "grey90",
+    label.size = NA,
+    size = 2.2,
+    parse = TRUE
+  ) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray") +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "gray") +
+  facet_grid(
+    rows = vars(pval_cutoff),
+    cols = vars(demcat),
+    scales = "free",
+    # switch = "y"
+  ) +
+  labs(
+    x = glue("Effect size of AGES cohort <br> <span style = 'font-size:9pt'>(N<sub>Subjects</sub> = 2,491)</span>"),
+    y = "Effect size of ADNI/AIBL meta-analysis <br> <span style = 'font-size:9pt'>(N<sub>Subjects</sub> = 797)</span>",
+    title = "EWAS Comparison: AGES vs ADNI/AIBL (Three Key Transitions, p < 1e-4.5 and p < 1e-4)",
+    subtitle = "Correlations at two stringent thresholds"
+  ) +
+  theme(
+    axis.title.x = element_textbox(halign = 0.5),
+    axis.title.y = element_textbox(halign = 0.5, orientation = "left-rotated"),
+    strip.text.x = element_textbox_simple(halign = 0.5, lineheight = 1.2, margin = margin(8, 2, 2, 2)),
+    strip.text.y = element_textbox_simple(halign = 0.5, orientation = "right-rotated", lineheight = 1.2, margin = margin(2, 8, 2, 2)),
+    strip.placement = "outside",
+    plot.title = element_text(size = 14, face = "bold"),
+    plot.subtitle = element_text(size = 12)
+  )
+
+print(three_transitions_p45_p40_plot)
+```
+
+## Export Figures
+
+```{r}
+#| label: save-figures
+
+# Save all transitions plot (png and rds)
+ggsave(
+  here("validation/output/fig_validation_ADNI_AIBL_scatter_all_transitions.png"),
+  altogether_plot,
+  width = 12,
+  height = 14,
+  dpi = 300,
+  bg = "white",
+  device = ragg::agg_png
+)
+write_rds(altogether_plot, here("validation/output/fig_validation_ADNI_AIBL_scatter_all_transitions.rds"))
+
+# Save three transitions plot (png and rds)
+ggsave(
+  here("validation/output/fig_validation_ADNI_AIBL_scatter_three_transitions.png"),
+  three_transitions_plot,
+  width = 9,
+  height = 14,
+  dpi = 300,
+  bg = "white",
+  device = ragg::agg_png
+)
+write_rds(three_transitions_plot, here("validation/output/fig_validation_ADNI_AIBL_scatter_three_transitions.rds"))
+
+# Save three transitions p4.5 plot (png and rds)
+ggsave(
+  here("validation/output/fig_validation_ADNI_AIBL_scatter_three_transitions_p4.5.png"),
+  three_transitions_p45_plot,
+  width = 9,
+  height = 4,
+  dpi = 300,
+  bg = "white",
+  device = ragg::agg_png
+)
+write_rds(three_transitions_p45_plot, here("validation/output/fig_validation_ADNI_AIBL_scatter_three_transitions_p4.5.rds"))
+
+# Save three transitions p4.5 and p4.0 plot (png and rds)
+ggsave(
+  here("validation/output/fig_validation_ADNI_AIBL_scatter_three_transitions_p4.5_p4.0.png"),
+  three_transitions_p45_p40_plot,
+  width = 9,
+  height = 6,
+  dpi = 300,
+  bg = "white",
+  device = ragg::agg_png
+)
+write_rds(three_transitions_p45_p40_plot, here("validation/output/fig_validation_ADNI_AIBL_scatter_three_transitions_p4.5_p4.0.rds"))
+
+message("Figures saved to validation/output/")
+```
+
+## Save Data
+
+```{r}
+#| label: save-data
+
+write_rds(
+  facet_correlations,
+  here("validation/output/correlation_results_ADNI_AIBL.rds")
+)
+
+write_rds(
+  merged_data,
+  here("validation/output/merged_data_ADNI_AIBL.rds")
+)
+
+write_rds(
+  directionality_data,
+  here("validation/output/directionality_data_ADNI_AIBL.rds")
+)
+
+message("Data saved to validation/output/")
+```

@@ -1,0 +1,97 @@
+---
+title: "Top 2000 CG Sites Excel Export"
+---
+
+```{r}
+#| label: load-packages
+#| echo: false
+
+pacman::p_load(openxlsx2, install = FALSE)
+
+# Source the optimized function for adding CG data to Excel
+source(here("custom_func/add_cg_to_excel_function.R"))
+```
+
+## Introduction
+
+This document prepares an Excel file containing the top 2000 CG sites for each dementia category (demcat). Each demcat's data will be placed in a separate sheet with appropriate formatting.
+
+## Load Data
+
+```{r}
+#| label: load-data
+
+# Source for the per-category top CpG lists
+source(here("custom_func/select_top_cg.R"))
+annot <- read_rds(here("data/upon_request/annotated_asso_wide.rds"))
+
+# List of demcats
+demcats <- c("normal2mci", "stable_mci", "normal2incid", "mci2incid", "prev")
+
+# Derive the top 2000 CG sites for each demcat
+top2000_data <- demcats |>
+  set_names() |>
+  map(~ select_top_cg(annot, .x, 2000)) |>
+  imap(~{
+    .x |>
+      arrange(desc(.data[[glue("nlog10_p_value_{.y}")]])) |>
+      mutate(rank = row_number(), .before = 1)
+  })
+
+# Check the structure of the first dataset
+glimpse(top2000_data[[1]])
+```
+
+## Create Excel Workbook
+
+```{r}
+#| label: create-excel
+
+# Start timing
+tic("Excel creation")
+
+# Create a workbook
+wb <- wb_workbook() |>
+  wb_set_bookview(window_height = 100000, window_width = 100000)
+
+# Add each demcat's data to a separate sheet
+suppl_data_order <- 2
+for (dc in demcats) {
+  # Create legend for the sheet
+  cg_legend <- glue("Supplementary Data {suppl_data_order}. Top 2000 CpG sites for {dc} dementia transition, decreasingly ranked by significance (-log10 P-value) of this transition. Stable_normal was used as the reference in the multivariate regression model for comparing the changes of CpG methylation after adjusting for the covariates age, sex, smoking status, and immune cell proportions. Prev denotes prevalent dementia indicating the subjects were already demented at the time of blood draw. The other categories are prospective dementia, meaning the subjects would develop dementia during the > 12 years followup and the trajectories are encoded in the category name: normal2mci denotes transition from normal cognition to mild cognitive impairment; stable_mci represents subjects with mild cognitive impairment at both baseline and follow-up; normal2incid indicates transition from normal cognition to incident dementia; and mci2incid denotes the transition from initial MCI at blood draw to incident dementia during followup. The GREAT-annotated genes were used to explore the Gene Ontology (GO) enrichment for the top 1000 (rank 1 through 1000) and top 2000 (rank 1 through 2000) CpGs.") |> 
+    as.character()
+  suppl_data_order <- suppl_data_order + 1
+
+  # Add the sheet with data
+  wb <- wb |> 
+    add_cg_to_excel(
+      df = top2000_data[[dc]], 
+      sheet_name = glue("CG_{dc}"), 
+      legend = cg_legend
+    )
+  
+  # Print progress
+  cat(glue("Added sheet for {dc} \n"))
+}
+
+# Save the workbook
+fs::dir_create(here("extended_data/output"))
+output_file <- here("extended_data/output/top2000_cg_sites.xlsx")
+wb |> wb_save(output_file)
+
+# End timing
+toc()
+
+cat(glue("Excel file saved to: {output_file}\n"))
+```
+
+## Summary
+
+This document has created an Excel workbook with five sheets, one for each dementia category:
+1. prev - Prevalent dementia
+2. normal2mci - Normal to Mild Cognitive Impairment
+3. stable_mci - Stable Mild Cognitive Impairment
+4. normal2incid - Normal to Incident dementia
+5. mci2incid - Mild Cognitive Impairment to Incident dementia
+
+Each sheet contains the top 2000 CG sites for that category, formatted according to the specifications in the `add_cg_to_excel` function.

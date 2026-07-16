@@ -1,0 +1,228 @@
+---
+title: "DMP scatter"
+subtitle: "DMP with p value < 1e-8"
+---
+
+```{r}
+#| label: load-packages
+#| echo: false
+#| cache: false
+
+pacman::p_load(systemfonts, install = FALSE)
+
+# Prefer all dplyr functions
+conflicted::conflict_prefer_all("dplyr", quiet=TRUE)
+```
+
+## Introduction
+
+Make the scatter plots for the effect size. Show the anti-correlation of effect size between normal2mci vs other dementia categories.
+
+## Load the data
+
+### Effect size in long format
+
+```{r}
+# Derive the long-format DMP effect sizes from the annotated association table
+source(here("custom_func/select_sig_cg.R"))
+source(here("custom_func/build_dmp_long_effect_size.R"))
+
+es <-
+  read_rds(here("data/upon_request/annotated_asso_wide.rds")) |>
+  select_sig_cg(8) |>
+  build_dmp_long_effect_size() |>
+  # Remove stable_mci
+  dplyr::filter(demcat != "stable_mci") |>
+  # Relevel demcat
+  dplyr::mutate(demcat = forcats::fct_relevel(demcat, "prev", "normal2incid", "mci2incid", "normal2mci"))
+
+glimpse(es)
+```
+
+## Function to display scientific notation
+
+```{r}
+#| output: false
+
+
+source(here("custom_func/display_scientific_notation.R"))
+
+# Test the function
+display_scientific_notation(1e-8)
+display_scientific_notation(0.3864971)
+```
+
+## Make a data preparation function
+
+This function will accept a data tibble, filter out the outliers, modify pval_cutoff,and calculate the correlation between two dementia categories.
+
+```{r}
+#| output: false
+
+# Create a function
+effect_size_for_scatter_plot <- function(.data, demcat_of_interest = normal2incid) {
+  .data |>
+    # Calculate the correlation between two dementia categories and create a label
+    mutate(
+      .by = demcat,
+      cor_estimate = cor.test(es, {{demcat_of_interest}}, method = "spearman")$estimate,
+      cor_pval = cor.test(es, {{demcat_of_interest}}, method = "spearman")$p.value %>% display_scientific_notation(),
+      # cor_label = sprintf("r = %0.2f; p = %0.0f", cor, cor_pval)
+      # cor_label = glue(
+        # "atop(paste(phantom(p)~'r = {scales::label_number(style_negative='hyphen', accuracy=0.01)(cor)}'), paste(phantom(r)~'p = {round(cor_pval, 3)}'))"
+      # )
+      cor_estimate_label = glue("italic(r) == ~{round(cor_estimate, 2)}"),
+      cor_pval_label = glue("italic(P) == ~{cor_pval}")
+    )
+}
+
+# Test the function
+es |>
+  effect_size_for_scatter_plot(
+    demcat_of_interest = prev
+  ) |>
+  glimpse()
+
+```
+
+
+## Make a plotting function
+
+This function will accept a data tibble and plot a scatter plot of the effect size of two dementia categories.
+
+```{r}
+#| label: plotting-function
+#| output: false
+
+# Create a function
+make_effect_size_scatter_plot <- function(.data, demcat_of_interest = "prev", size = 2, ...) {
+  .data |>
+    ggplot(aes(x = .data[[demcat_of_interest]], y = es)) +
+    geom_point(size = 0.3, color = "grey30") +
+    geom_smooth(formula = y ~ x, method = "lm", se = FALSE, linewidth = 0.6) +
+    # Show the correlation at the top left corner
+    geom_text( aes(label = cor_estimate_label), x = I(0.05), y = I(0.95), hjust = 0, vjust = 0.5, color = "darkred", family = "Source Sans Pro", fontface = "plain", parse = TRUE, size = size)  +
+    geom_text( aes(label = cor_pval_label), x = I(0.05), y = I(0.87), hjust = 0, vjust = 0.5, color = "darkred", family = "Source Sans Pro", fontface = "plain", parse = TRUE, size = size) +
+    facet_wrap(vars(demcat), nrow = 1, scales = "free") +
+    # Show a light gray dashed line at x = 0 and y = 0
+    geom_hline(yintercept = 0, linetype = "dashed", color = "gray") +
+    geom_vline(xintercept = 0, linetype = "dashed", color = "gray") +
+    labs(x = glue("{dc}", dc = if (demcat_of_interest == "prev") "Prevalent dementia" else glue("{demcat_of_interest} transition")), y = "Other transitions")
+}
+
+# Test the function
+es |>
+  filter(demcat != "prev") |> 
+  filter(! (demcat == "mci2incid" & es < -0.4)) |> 
+  filter(! (demcat == "normal2mci" & es < -0.3)) |> 
+  effect_size_for_scatter_plot(
+    demcat_of_interest = prev
+  ) |>
+  make_effect_size_scatter_plot(demcat_of_interest = "prev", size = 2) 
+
+```
+
+## Initialize a list to store the scatter plots
+
+```{r}
+#| output: false
+
+# For main figures
+scatter_DMP_main <- list()
+# For supplementary figures
+scatter_DMP_suppl <- list()
+```
+
+## Prevelant dementia vs other dementia categories
+
+```{r}
+#| label: fig-prevalent-vs-other-categories
+#| figure.width: 10
+#| figure.height: 6
+
+data_for_prev_plot <- 
+  es |>
+  filter(demcat != "prev") |> 
+  filter(! (demcat == "mci2incid" & es < -0.4)) |> 
+  filter(! (demcat == "normal2mci" & es < -0.3)) |>
+  effect_size_for_scatter_plot(
+    demcat_of_interest = prev
+  )
+
+scatter_DMP_main$prev <- 
+  data_for_prev_plot |>
+  make_effect_size_scatter_plot(demcat_of_interest = "prev", size = 3)
+
+scatter_DMP_suppl$prev <-
+  data_for_prev_plot |>
+  make_effect_size_scatter_plot(demcat_of_interest = "prev", size = 4)
+
+scatter_DMP_main$prev
+scatter_DMP_suppl$prev
+```
+
+## mci2incid vs other dementia categories
+
+```{r}
+#| label: fig-mci2incid-vs-other-categories
+#| figure.width: 10
+#| figure.height: 6
+
+data_for_mci2incid_plot <- 
+  es |>
+  filter(demcat != "mci2incid") |> 
+  filter(! (demcat == "normal2mci" & es < -0.3)) |> 
+  filter(mci2incid > -0.4) |>
+  effect_size_for_scatter_plot(
+    demcat_of_interest = mci2incid
+  )
+
+scatter_DMP_main$mci2incid <- 
+  data_for_mci2incid_plot |>
+  make_effect_size_scatter_plot(demcat_of_interest = "mci2incid", size = 3)
+
+scatter_DMP_suppl$mci2incid <-
+  data_for_mci2incid_plot |>
+  make_effect_size_scatter_plot(demcat_of_interest = "mci2incid", size = 4)
+
+scatter_DMP_suppl$mci2incid
+```
+
+## normal2incid vs other dementia categories
+
+```{r}
+#| label: fig-normal2incid-vs-other-categories
+#| figure.width: 10
+#| figure.height: 6
+
+data_for_normal2incid_plot <- 
+  es |>
+  filter(demcat != "normal2incid") |> 
+  filter(! (demcat == "mci2incid" & es < -0.4)) |> 
+  # filter(! (demcat == "normal2mci" & es < -0.3)) |> 
+  filter(normal2incid > -0.3) |>
+  effect_size_for_scatter_plot(
+    demcat_of_interest = normal2incid
+  )
+
+scatter_DMP_main$normal2incid <- 
+  data_for_normal2incid_plot |>
+  make_effect_size_scatter_plot(demcat_of_interest = "normal2incid", size = 2)
+
+scatter_DMP_suppl$normal2incid <- 
+  data_for_normal2incid_plot |>
+  make_effect_size_scatter_plot(demcat_of_interest = "normal2incid", size = 4)
+
+scatter_DMP_suppl$normal2incid
+```
+
+
+## Save the scatter plots
+
+```{r}
+#| output: false
+fs::dir_create(here("normal2mci_focused/output"))
+
+write_rds(scatter_DMP_main, here("normal2mci_focused/output/scatter_DMP_main.rds"))
+write_rds(scatter_DMP_suppl, here("normal2mci_focused/output/scatter_DMP_suppl.rds"))
+```

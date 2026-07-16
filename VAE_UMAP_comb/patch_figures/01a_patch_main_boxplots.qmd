@@ -1,0 +1,147 @@
+---
+title: "Patch main figure — boxplots (panels a–d)"
+---
+
+```{r}
+#| label: load-packages
+#| echo: false
+
+pacman::p_load(patchwork, ggtext, install = FALSE)
+```
+
+## Introduction
+
+Compose the boxplot panels (a–d) of the main figure: VAE boxplots (a–c) and UMAP boxplot (d).
+
+## Load the data
+
+```{r}
+
+boxplot_list <- read_rds(
+  here("VAE/lite/latent_coordinates/output/fig_tbl/boxplot_list_threshold_8.rds")
+)
+
+boxplot_list_umap <- read_rds(
+  here("UMAP/lite/latent_coordinates/output/fig_tbl/boxplot_list_threshold_8.rds")
+)
+
+```
+
+## Create a theme for the figure
+
+```{r}
+source(here("custom_func/theme_main_fig.R"))
+set_pub_geom_defaults()
+```
+
+## Compose the boxplot figure
+
+### Modify ggplot2 objects
+
+```{r}
+
+# Panel c: the three near-monotonic VAE dimensions named in the narrative (vae_6, vae_2, vae_4),
+# stacked in a single column so the panel is tall and narrow. Derive them from the top-3 ANOVA
+# ranks and assert their identity -- vae_N is not a stable axis across fits, so a hardcoded subset
+# would silently show the wrong dimensions on a retrain.
+progression_vae <- boxplot_list$one_dim_selected_1row
+label_idx_c <- purrr::detect_index(progression_vae$layers, \(l) inherits(l$geom, "GeomText"))
+stopifnot(label_idx_c > 0)
+keep_c <- progression_vae$layers[[label_idx_c]]$data |>
+  dplyr::arrange(p) |>
+  dplyr::slice_head(n = 3) |>
+  dplyr::pull(vae_dir) |>
+  as.character()
+stopifnot(
+  "Fig 2c narrative names VAE_6/VAE_2/VAE_4; the top-3 ANOVA THR8 dimensions have changed" =
+    setequal(keep_c, c("vae_6", "vae_2", "vae_4"))
+)
+progression_vae$data <- progression_vae$data |> dplyr::filter(vae_dir %in% keep_c) |> droplevels()
+for (i in seq_along(progression_vae$layers)) {
+  ld <- progression_vae$layers[[i]]$data
+  if (!is.null(ld) && "vae_dir" %in% names(ld)) {
+    progression_vae$layers[[i]]$data <- ld |> dplyr::filter(vae_dir %in% keep_c) |> droplevels()
+  }
+}
+progression_vae <- progression_vae + facet_wrap(~vae_dir, ncol = 1, scales = "free_y")
+
+boxplots_main <- lst(
+  prev = boxplot_list$prev,
+  stable_mci = boxplot_list$stable_mci,
+  progression_vae = progression_vae
+) |>
+  map(~ .x + theme_main_fig() +
+  theme(
+    axis.text.x = ggtext::element_markdown(angle = 30, hjust = 1, vjust = 1),
+    axis.title.x = element_blank(),
+    plot.margin = margin(t = 0, b = 0, l = 0, r = 0)
+  ))
+
+# Rescale geom sizes for publication column width (10" → 6.5")
+# Shift p-value text closer to y-axis
+shift_pvalue_text <- function(p, x = 0.06) {
+  for (i in seq_along(p$layers)) {
+    ap <- p$layers[[i]]$aes_params
+    if (inherits(p$layers[[i]]$geom, "GeomText") &&
+        identical(ap$colour, "darkred")) {
+      p$layers[[i]]$aes_params$x <- I(x)
+    }
+  }
+  p
+}
+
+boxplots_main <- boxplots_main |>
+  map(~ rescale_layer_params(.x, size_scale = 0.5, linewidth_scale = 0.5, pt_scale = 0.8)) |>
+  map(shift_pvalue_text)
+
+panel_d <- boxplot_list_umap$one_dim_selected_1row +
+  theme_main_fig() +
+  theme(
+    axis.text.x = ggtext::element_markdown(angle = 30, hjust = 1, vjust = 1),
+    axis.title.x = element_blank(),
+    plot.margin = margin(t = 0, b = 0, l = 0, r = 0)
+  )
+panel_d <- rescale_layer_params(panel_d, size_scale = 0.5, linewidth_scale = 0.5, pt_scale = 0.8)
+panel_d <- shift_pvalue_text(panel_d)
+
+```
+
+### Compose with patchwork
+
+```{r}
+#| label: fig-vae-boxplots
+#| fig-width: 12
+#| fig-height: 12
+#| fig-cap: "VAE and UMAP boxplots"
+
+layout <- "
+AAAAAAAACC
+BBBBBBBBCC
+DDDDDDDDCC
+"
+
+fig_vae_boxplots <-
+  boxplots_main$prev +
+  boxplots_main$stable_mci +
+  free(boxplots_main$progression_vae) +
+  free(panel_d) +
+  plot_layout(design = layout, guides = "auto", axes = "keep", axis_titles = "keep",
+              widths = c(1, 1, 1, 1, 1, 1, 1, 1, 1.5, 1.5)) +
+  plot_annotation(tag_levels = "a")
+
+fig_vae_boxplots
+
+fs::dir_create(here("VAE_UMAP_comb/patch_figures/output"))
+
+png(here("VAE_UMAP_comb/patch_figures/output/fig_vae_boxplots.png"),
+    width = 6.5, height = 6, units = "in", res = 600)
+fig_vae_boxplots
+dev.off()
+```
+
+## Verify output
+
+```{r}
+fs::file_info(here("VAE_UMAP_comb/patch_figures/output/fig_vae_boxplots.png")) |>
+  select(path, size, modification_time)
+```

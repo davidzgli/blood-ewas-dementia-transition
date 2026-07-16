@@ -1,0 +1,153 @@
+---
+title: "Patch supplementary figures — pathway analysis"
+editor_options:
+  chunk_output_type: console
+---
+
+## Overview
+
+This document composes the supplementary pathway analysis figures for the manuscript: top 2000 CpG upset plots for genes and GO terms, top 2000 function categorization barplot, and supplementary tables.
+
+```{r}
+#| label: load-packages
+#| echo: false
+
+pacman::p_load(patchwork, ggtext, gt, ragg, install = FALSE)
+knitr::opts_chunk$set(dev = "ragg_png")
+```
+
+```{r}
+#| label: load-theme
+#| echo: false
+
+source(here("custom_func/theme_main_fig.R"))
+set_pub_geom_defaults()
+```
+
+## Load Plot Objects
+
+Load pre-generated plot objects and tables for composition.
+
+```{r}
+#| label: load-plots
+
+top2000_genes_upset <- read_rds(
+  here("pathway_analysis/01_genes/output/top2000_all_genes_upset_plot.rds")
+)
+
+top2000_go_terms_upset <- read_rds(
+  here("pathway_analysis/03_transition_specific_GO_terms/output/top2000_condition_specific_GO_terms.rds")
+)
+
+top2000_function_categorization <- read_rds(
+  here("pathway_analysis/04_function_categorization/output/top2000_barplot_function_category.rds")
+)
+
+top1000_gt_tables <- read_rds(
+  here("pathway_analysis/05_patch_fig_and_make_table/output/top1000_condition_specific_GO_terms_gt_tables.rds")
+)
+```
+
+## Supplementary Upset Figure
+
+Compose top 2000 gene and GO term upset plots into a single stacked figure.
+
+```{r}
+#| label: modify-upset-plots
+
+panel_a <- top2000_genes_upset + theme_main_fig()
+panel_b <- top2000_go_terms_upset + theme_main_fig()
+```
+
+```{r}
+#| label: compose-upset-figure
+
+fig_sup_upset <- panel_a + panel_b +
+  plot_layout(ncol = 1, guides = "keep", axes = "keep", axis_titles = "collect") +
+  plot_annotation(tag_levels = "a")
+```
+
+```{r}
+#| label: save-upset-figure
+fs::dir_create(here("pathway_analysis/05_patch_fig_and_make_table/output"))
+
+agg_png(
+  here("pathway_analysis/05_patch_fig_and_make_table/output/fig_sup_upset_top2000_genes_and_GO_terms.png"),
+  width = 7.5, height = 9, units = "in", res = 600
+)
+print(fig_sup_upset)
+dev.off()
+```
+
+```{r}
+#| label: display-upset-figure
+#| fig-width: 10
+#| fig-height: 10
+
+fig_sup_upset
+```
+
+## Supplementary Barplot Figure
+
+Top 2000 CpG function categorization barplot.
+
+```{r}
+#| label: compose-barplot-figure
+
+fig_sup_barplot <- top2000_function_categorization +
+  theme_main_fig() +
+  theme(
+    axis.title.y = element_blank(),
+    axis.text = element_markdown(angle = 15)
+  )
+```
+
+```{r}
+#| label: save-barplot-figure
+
+agg_png(
+  here("pathway_analysis/05_patch_fig_and_make_table/output/fig_sup_barplot_top2000_function_categorization.png"),
+  width = 6.5, height = 8, units = "in", res = 600
+)
+print(fig_sup_barplot)
+dev.off()
+```
+
+```{r}
+#| label: display-barplot-figure
+#| fig-width: 10
+#| fig-height: 10
+
+fig_sup_barplot
+```
+
+## Supplementary Tables
+
+Export gt tables as PNG images.
+
+```{r}
+#| label: save-tables
+
+top1000_gt_tables |>
+  purrr::iwalk(~gtsave(.x, here(glue("pathway_analysis/05_patch_fig_and_make_table/output/top1000_{.y}_supplementary_table.png")), zoom = 2, expand = 10))
+```
+
+## Verify Output
+
+Confirm all output files were created successfully.
+
+```{r}
+#| label: verify-output
+
+output_files <- c(
+  here("pathway_analysis/05_patch_fig_and_make_table/output/fig_sup_upset_top2000_genes_and_GO_terms.png"),
+  here("pathway_analysis/05_patch_fig_and_make_table/output/fig_sup_barplot_top2000_function_categorization.png")
+)
+
+for (f in output_files) {
+  file_info <- fs::file_info(f)
+  cat("Output file:", f, "\n")
+  cat("File size:", format(file_info$size, units = "MB"), "\n")
+  cat("Created:", as.character(file_info$modification_time), "\n\n")
+}
+```

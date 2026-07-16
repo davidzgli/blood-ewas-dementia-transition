@@ -1,0 +1,239 @@
+---
+title: "Manhattan Plot"
+---
+
+## Overview
+
+This document generates a Manhattan plot displaying genome-wide DNA methylation associations with dementia transitions, annotating CpG sites with genes of potential neurological relevance.
+
+```{r}
+#| label: load-packages
+#| echo: false
+
+conflicted::conflict_prefer_all("dplyr", quiet = TRUE)
+```
+
+## Introduction
+
+Make Manhattan plot to show the significant cg sites.
+
+## Load Data
+
+
+### Read the dementia-related functions
+
+```{r}
+dementia_relevance <- read_rds(here("data/private/gene_dmp_dementia_relevance.rds"))
+
+glimpse(dementia_relevance)
+```
+
+### Read the plot-ready data
+
+```{r}
+manh_tbl_reduced <- read_rds(here("data/upon_request/manhattan_plot_data.rds"))
+
+glimpse(manh_tbl_reduced)
+```
+
+### Prepare X axis
+
+X axis breaks and labels, and point colors
+
+```{r}
+axis_set <- 
+  manh_tbl_reduced |> 
+  group_by(chr) |>
+  summarise(
+    x_axis_order = median(x_axis_order),
+  ) |> 
+  mutate(color = rep(c("#276FBF", "#183059"), length(unique(chr)) / 2))
+
+glimpse(axis_set)
+```
+
+### Make the plot
+
+```{r}
+#| label: make-plot
+#| fig-width: 12
+#| fig-height: 8
+manh_plot <-
+  manh_tbl_reduced |> 
+  ggplot(aes(x = x_axis_order, y = nlog10_p_value,  color = chr)) +
+  geom_point(alpha = 0.75, size = 0.5) +
+  # geom_hline(yintercept = 8, linetype = "dashed", color = "darkred", linewidth = 1.0) +
+  annotate("segment", x = min(manh_tbl_reduced$x_axis_order), xend = max(manh_tbl_reduced$x_axis_order), y = 8, yend = 8, color = "darkred", linewidth = 0.6, linetype = "dashed") +
+  annotate("label", x = 3000000, y = 8,
+  # annotate("label", x = max(manh_tbl_reduced$x_axis_order) + 10000, y = 8,
+           label = "1.0 %*% 10^{-8}~(threshold)",
+          #  label = "1.0 %*% 10^{-8}",
+           parse = TRUE,
+           size = 4,
+           hjust = 0,
+           vjust = 0.8,
+           fill = "darkred",
+           colour = "white",
+           fontface = "bold") +
+  scale_color_manual(values = axis_set$color, guide = "none")
+
+#print(manh_plot)
+
+```
+
+### Save the plot
+
+```{r}  
+#| label: save-plot
+
+# write_rds(manh_plot, "output/manhattan_plot.rds")
+```
+
+
+## Process dementia-relevance data
+
+### Make a lite version of dementia-relevance data
+
+```{r}
+
+dementia_relevance_lite <- 
+dementia_relevance |> 
+  # Lengthen the data by p values
+  pivot_longer(cols = contains("p_value"), names_to = "demcat", values_to = "nlog10_p_value", names_prefix = "nlog10_p_value_") |>
+  # Relevel the dementia categories
+  mutate(demcat = fct_relevel(demcat, "normal2mci", "stable_mci", "normal2incid", "mci2incid", "prev")) |>
+  # Filter by p value threshold
+  filter(nlog10_p_value >= 8) |> 
+  # Keep the first row for genes with multiple CpG sites
+  slice_head(n = 1, by = great_anno) 
+
+glimpse(dementia_relevance_lite)
+
+```
+
+### Make a cross table of dementia-relevance data
+
+```{r}
+
+dementia_relevance_lite |> 
+  gtsummary::tbl_cross(row = demcat, col = closeness_level) 
+```
+
+### Make plot-ready dementia-relevance data
+
+```{r}
+
+dementia_relevance_plot <- 
+  dementia_relevance_lite |> 
+  # Keep the top closeness level
+  filter(closeness_level == 1) |>
+  # Attach the genes whose closeness level is 2 for normal2mci transition
+  bind_rows(dementia_relevance_lite %>% filter(closeness_level == 2, demcat == "normal2mci")) |>
+  # Attach the genes whose closeness level is 3 for normal2mci transition
+  bind_rows(dementia_relevance_lite %>% filter(closeness_level == 3, demcat == "normal2incid")) |>
+  # Sample a few genes whose closeness level is 2 for stable_mci transition
+  bind_rows(dementia_relevance_lite %>% filter(closeness_level == 2, demcat == "stable_mci") %>% slice_max(n = 2, order_by = nlog10_p_value)) |>
+  # Sample a few genes whose closeness level is 3 for normal2mci transition
+  bind_rows(dementia_relevance_lite %>% filter(closeness_level == 3, demcat == "mci2incid") %>% slice_max(n = 2, order_by = nlog10_p_value)) |>
+  # Sample a few genes whose closeness level is 2 for prevelant dementia
+  bind_rows(dementia_relevance_lite %>% filter(closeness_level == 2, demcat == "prev") %>% slice_max(n = 30, order_by = nlog10_p_value)) |>
+  # Keep one gene for each CpG site
+  slice_head(n = 1, by = cg) |>
+  # Get x_axis_order from manh_tbl_reduced
+  left_join(select(manh_tbl_reduced, cg, x_axis_order), by = "cg", multiple = "first") |>
+  # Arrange by x_axis_order
+  arrange(x_axis_order) |>
+
+  # Add a column for plot_order
+  mutate(relevance_order = seq(min(manh_tbl_reduced$x_axis_order), max(manh_tbl_reduced$x_axis_order), length.out = n()))
+
+glimpse(dementia_relevance_plot)
+```
+
+### Modify dementia-relevance column
+
+```{r}
+
+dementia_relevance_plot_2 <- 
+  dementia_relevance_plot |> 
+    mutate(
+    dementia_relevance_modified = str_c(
+      "**", great_anno, ":** ", 
+      str_replace(dementia_relevance, "^.*?; ", "")
+    )
+  ) |>
+  # Remove Cerebral Autosomal Dominant Arteriopathy with Subcortical Infarcts and Leukoencephalopathy (CADASIL) to shorten the text. Add it to the legend.
+  mutate(dementia_relevance_modified = str_remove(dementia_relevance_modified, regex(" *\\(Cerebral Autosomal Dominant Arteriopathy with Subcortical Infarcts and Leukoencephalopathy\\)", ignore_case = TRUE)))
+
+glimpse(dementia_relevance_plot_2)
+```
+
+### Add dementia-relevance data to the plot
+
+```{r}
+#| fig-width: 10
+#| fig-height: 12
+
+
+manh_plot_dementia_relevance <-
+manh_plot +
+  # Add symbols for selected CpG sites
+  geom_point(data = select(dementia_relevance_plot_2, cg, x_axis_order, nlog10_p_value, demcat), 
+             aes(x = x_axis_order, y = nlog10_p_value, fill = demcat), shape = 23, size = 3, 
+             color = "white", alpha = 1, inherit.aes = FALSE) +
+  # Add segment for dementia-relevance data
+  geom_segment(data = dementia_relevance_plot_2, 
+               aes(x = x_axis_order, xend = relevance_order, y = nlog10_p_value, yend = 20), 
+               color = "black", alpha = 1, linetype = "dashed", inherit.aes = FALSE) +
+  # Add symbols for dementia-relevance data
+  geom_point(data = dementia_relevance_plot_2, 
+             aes(x = relevance_order, y = 20, fill = demcat), shape = 21, size = 2, 
+             color = "black", alpha = 1, inherit.aes = FALSE) + 
+  # Add text for dementia-relevance data using ggtext::geom_richtext()
+  ggtext::geom_richtext(data = dementia_relevance_plot_2,
+                aes(x = relevance_order + 65000, y = 21, label = dementia_relevance_modified),
+                fill = NA, label.color = NA,
+                color = "black", angle = 90,
+                hjust = 0,
+                vjust = -0.3,
+                size = 4.5,
+                label.padding = unit(0.1, "lines"),
+                inherit.aes = FALSE) +
+  # Expand the y axis
+  scale_x_continuous(name = NULL, label = axis_set$chr, breaks = axis_set$x_axis_order, expand = expansion(mult = c(0.01, 0.01))) +
+  scale_y_continuous(name = "-log10(p-value)", limits = c(0, 55), breaks = seq(0, 20, 5)) +
+  guides(fill = guide_legend(title = "Dementia Transition", override.aes = list(size = 3, shape = 21)), color = "none") +
+  theme_minimal() +
+  theme( 
+    legend.position = "bottom",
+    #legend.position = c(0, 0.1),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    # panel.background = element_rect(fill = "white"),
+    axis.text.x = element_text(angle = 60, size = 8, hjust = 1.0, vjust = 2.0),
+    axis.title.y = element_text(size = 8, vjust = 0.2, hjust = 0.1)
+  )
+
+print(manh_plot_dementia_relevance)
+```
+
+### Save the plot
+
+```{r}
+fs::dir_create(here("dmp/output"))
+
+# Save Manhattan plot
+ggsave(
+  here("dmp/output/manhattan_plot_dementia_relevance.png"),
+  manh_plot_dementia_relevance,
+  width = 10,
+  height = 12,
+  dpi = 300,
+  bg = "white",
+  device = ragg::agg_png
+)
+
+
+write_rds(manh_plot_dementia_relevance, here("dmp/output/manhattan_plot_dementia_relevance.rds"))
+
+```

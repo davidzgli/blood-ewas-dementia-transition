@@ -1,0 +1,194 @@
+---
+title: "Patch supplementary figures — scatter & peak plots and DPS line"
+---
+
+## Overview
+
+Compose supplementary scatter+peak trajectory figures for both VAE and UMAP lite pipelines. Generates multi-row panels for threshold 8 and threshold 7 at selected ranks, plus the combined DPS line plot.
+
+```{r}
+#| label: load-packages
+#| echo: false
+
+pacman::p_load(patchwork, ggtext, install = FALSE)
+```
+
+```{r}
+#| label: setup-theme
+
+source(here("custom_func/theme_main_fig.R"))
+set_pub_geom_defaults()
+
+fs::dir_create(here("VAE_UMAP_comb/patch_figures/output"))
+```
+
+## Helper functions
+
+### Compose scatter+peak pairs
+
+Stacked rows with `"AAABB"` layout (3:2 ratio). First row keeps legend; subsequent rows hide it. The `method` parameter selects the VAE or UMAP lite pipeline.
+
+```{r}
+#| label: compose-scatter-peak
+
+compose_scatter_peak <- function(method, threshold, ranks) {
+  base_path <- switch(method,
+    "VAE"  = here("VAE/lite/scatter/output/fig_tbl"),
+    "UMAP" = here("UMAP/lite/scatter/output/fig_tbl")
+  )
+
+  rows <- imap(ranks, \(rank, idx) {
+    scatter <- read_rds(
+      glue("{base_path}/threshold{threshold}/scatter_rank{rank}.rds")
+    )
+    peak <- read_rds(
+      glue("{base_path}/threshold{threshold}/peak_rank{rank}.rds")
+    )
+
+    scatter <- scatter + theme_main_fig() +
+      theme(
+        plot.title = element_blank(),
+        plot.subtitle = element_blank(),
+        axis.text.x = ggtext::element_markdown(angle = 30, hjust = 1, vjust = 1),
+        plot.margin = margin(t = 2, b = 2, l = 2, r = 2),
+        legend.position = if (idx == 1) "top" else "none"
+      )
+    scatter <- rescale_layer_params(scatter, size_scale = 0.6, linewidth_scale = 0.6)
+
+    peak <- peak + theme_main_fig() +
+      theme(
+        plot.title = element_blank(),
+        plot.subtitle = element_blank(),
+        legend.position = "none",
+        axis.text.x = ggtext::element_markdown(angle = 30, hjust = 1, vjust = 1),
+        plot.margin = margin(t = 2, b = 2, l = 2, r = 2)
+      )
+    peak <- rescale_layer_params(peak, size_scale = 0.45, linewidth_scale = 0.45)
+
+    scatter + peak + plot_layout(design = "AAAABB")
+  })
+
+  wrap_plots(rows, ncol = 1) +
+    plot_annotation(tag_levels = "a")
+}
+```
+
+## VAE scatter+peak plots
+
+### VAE threshold 8 part 1 (ranks 03-05)
+
+Main figure (01b) shows ranks 01-02 at T8, so supplementary starts at rank 03.
+
+```{r}
+#| label: suppl-fig-vae-scatter-t8-p1
+
+fig_vae_scatter_t8_p1 <- compose_scatter_peak("VAE", 8, c("03", "04", "05"))
+
+ggsave(here("VAE_UMAP_comb/patch_figures/output/fig_suppl_vae_scatter_t8_part1.png"),
+       fig_vae_scatter_t8_p1,
+       width = 6.5, height = 4.9, dpi = 600, bg = "white",
+       device = grDevices::png)
+```
+
+### VAE threshold 8 part 2 (ranks 06, 11, 14)
+
+```{r}
+#| label: suppl-fig-vae-scatter-t8-p2
+
+fig_vae_scatter_t8_p2 <- compose_scatter_peak("VAE", 8, c("06", "11", "14"))
+
+ggsave(here("VAE_UMAP_comb/patch_figures/output/fig_suppl_vae_scatter_t8_part2.png"),
+       fig_vae_scatter_t8_p2,
+       width = 6.5, height = 4.9, dpi = 600, bg = "white",
+       device = grDevices::png)
+```
+
+### VAE threshold 7 (ranks 01, 06, 09)
+
+```{r}
+#| label: suppl-fig-vae-scatter-t7
+
+fig_vae_scatter_t7 <- compose_scatter_peak("VAE", 7, c("01", "06", "09"))
+
+ggsave(here("VAE_UMAP_comb/patch_figures/output/fig_suppl_vae_scatter_t7.png"),
+       fig_vae_scatter_t7,
+       width = 6.5, height = 4.9, dpi = 600, bg = "white",
+       device = grDevices::png)
+```
+
+## UMAP scatter+peak plots
+
+### UMAP threshold 8 part 1 (ranks 03-05)
+
+```{r}
+#| label: suppl-fig-umap-scatter-t8-p1
+
+fig_umap_scatter_t8_p1 <- compose_scatter_peak("UMAP", 8, c("03", "04", "05"))
+
+ggsave(here("VAE_UMAP_comb/patch_figures/output/fig_suppl_umap_scatter_t8_part1.png"),
+       fig_umap_scatter_t8_p1,
+       width = 6.5, height = 4.9, dpi = 600, bg = "white",
+       device = grDevices::png)
+```
+
+### UMAP threshold 8 part 2 (ranks 06-08)
+
+```{r}
+#| label: suppl-fig-umap-scatter-t8-p2
+
+fig_umap_scatter_t8_p2 <- compose_scatter_peak("UMAP", 8, c("06", "07", "08"))
+
+ggsave(here("VAE_UMAP_comb/patch_figures/output/fig_suppl_umap_scatter_t8_part2.png"),
+       fig_umap_scatter_t8_p2,
+       width = 6.5, height = 4.9, dpi = 600, bg = "white",
+       device = grDevices::png)
+```
+
+### UMAP threshold 7 (ranks 01-03)
+
+```{r}
+#| label: suppl-fig-umap-scatter-t7
+
+fig_umap_scatter_t7 <- compose_scatter_peak("UMAP", 7, c("01", "02", "03"))
+
+ggsave(here("VAE_UMAP_comb/patch_figures/output/fig_suppl_umap_scatter_t7.png"),
+       fig_umap_scatter_t7,
+       width = 6.5, height = 4.9, dpi = 600, bg = "white",
+       device = grDevices::png)
+```
+
+## DPS line (combined VAE and UMAP)
+
+```{r}
+#| label: suppl-fig-dps-line
+
+fig_dps_line <- read_rds(
+  here("VAE_UMAP_comb/output/fig_dps_line.rds")
+)
+
+fig_dps_line <- fig_dps_line + theme_main_fig() +
+  theme(
+    plot.title = element_blank(),
+    plot.subtitle = element_blank()
+  )
+fig_dps_line <- rescale_layer_params(fig_dps_line, size_scale = 0.6, linewidth_scale = 0.6)
+
+ggsave(here("VAE_UMAP_comb/patch_figures/output/fig_suppl_dps_line.png"),
+       fig_dps_line,
+       width = 6.5, height = 3.9, dpi = 600, bg = "white",
+       device = grDevices::png)
+```
+
+## Verify output
+
+```{r}
+#| label: verify-output
+
+output_files <- fs::dir_ls(
+  here("VAE_UMAP_comb/patch_figures/output"),
+  glob = "*suppl_vae_scatter*|*suppl_umap_scatter*|*suppl_dps_line*"
+)
+fs::file_info(output_files) |>
+  select(path, size, modification_time) |>
+  mutate(path = basename(path))
+```

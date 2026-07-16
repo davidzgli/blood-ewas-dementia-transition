@@ -1,0 +1,181 @@
+---
+title: "Scatter Contour Plots (Lite)"
+subtitle: "All 15 dimension pairs ranked by Path2D DPS for thresholds 7 & 8"
+---
+
+## Overview
+
+Display combined faceted scatter contour plots for all 15 dimension pairs per threshold, ranked by Path2D DPS (highest first).
+
+## Setup
+
+```{r}
+#| label: load-packages
+#| echo: false
+
+pacman::p_load(patchwork, ggdensity, install = FALSE)
+
+conflicted::conflict_prefer_all("dplyr", quiet = TRUE)
+```
+
+```{r}
+#| label: load-custom-functions
+
+source(here("custom_func/make_faceted_scatter_and_contour_plot.R"))
+source(here("custom_func/plot_density_evolution.R"))
+```
+
+## Constants
+
+```{r}
+#| label: constants
+
+THRESHOLDS <- c(7, 8)
+
+trajectory_colors <- c(
+  stable_normal = "#1f77b4",
+  normal2mci = "#ff7f0e",
+  stable_mci = "#2ca02c",
+  normal2incid = "#d62728",
+  mci2incid = "#9467bd",
+  prev_dementia = "#8c564b"
+)
+```
+
+## Load Data
+
+```{r}
+#| label: load-data
+
+# Load per-threshold data
+load_threshold_data <- function(t) {
+  list(
+    dps_results = read_rds(here(glue("UMAP/lite/output/dps_results_threshold_{t}.rds"))),
+    normal_repeated = read_rds(here(glue("UMAP/lite/output/normal_repeated_threshold_{t}.rds"))),
+    plot_limits = read_rds(here(glue("UMAP/lite/output/plot_limits_threshold_{t}.rds"))),
+    centroids = read_rds(here(glue("UMAP/lite/output/centroids_threshold_{t}.rds")))
+  )
+}
+
+threshold_data <- THRESHOLDS |>
+  set_names() |>
+  map(load_threshold_data)
+
+walk(THRESHOLDS, \(t) message(glue("Threshold {t}: {nrow(threshold_data[[as.character(t)]]$dps_results)} dim pairs")))
+```
+
+## Generate Plots
+
+```{r}
+#| label: generate-plots
+#| output: false
+
+generate_threshold_plots <- function(t) {
+  td <- threshold_data[[as.character(t)]]
+  pairs <- td$dps_results |> arrange(dps_rank)
+
+  pairs |>
+    pmap(\(threshold, dimx, dimy, path2d_dps, dps_rank, ...) {
+      rank_label <- glue("{dps_rank} of 15")
+
+      centroid_data <- td$centroids |>
+        filter(dimx == !!dimx, dimy == !!dimy) |>
+        mutate(rank_dps_label = glue("Rank: {rank_label} | DPS: {round(path2d_dps, 3)}"))
+
+      plot_faceted <- make_faceted_scatter_and_contour_plot(
+        .data = td$normal_repeated,
+        x_var = dimx,
+        y_var = dimy,
+        threshold = glue("threshold_{t}"),
+        adjust = c(1.0, 1.0)
+      ) +
+        # lims(
+        #   x = c(td$plot_limits[[dimx]][1], td$plot_limits[[dimx]][2]),
+        #   y = c(td$plot_limits[[dimy]][1], td$plot_limits[[dimy]][2])
+        # ) +
+        labs(x = str_to_upper(dimx), y = str_to_upper(dimy))
+
+      plot_evolution <- plot_density_evolution(
+        .data = centroid_data,
+        dim_cols = c(dimx, dimy),
+        statistic = "mean",
+        trajectory_colors = trajectory_colors
+      ) +
+        facet_wrap(vars(rank_dps_label)) +
+        labs(x = str_to_upper(dimx), y = str_to_upper(dimy)) +
+        theme(strip.text = element_text(size = 12, face = "bold"))
+
+      combined <- plot_faceted + plot_evolution +
+        plot_layout(widths = c(4, 1)) +
+        plot_annotation(
+          title = glue("Threshold {t}: {dimx} vs {dimy}"),
+          theme = theme(plot.title = element_text(size = 16, face = "bold"))
+        )
+
+      list(scatter = plot_faceted, peak = plot_evolution, combined = combined)
+    })
+}
+
+all_plots <- THRESHOLDS |>
+  set_names() |>
+  map(generate_threshold_plots)
+```
+
+# Threshold 8
+
+All 15 dimension pairs for threshold 8, ranked by Path2D DPS.
+
+```{r}
+#| label: fig-threshold-8
+#| fig-width: 18
+#| fig-height: 6
+
+walk(all_plots[["8"]], \(plt) print(plt$combined))
+```
+
+# Threshold 7
+
+All 15 dimension pairs for threshold 7, ranked by Path2D DPS.
+
+```{r}
+#| label: fig-threshold-7
+#| fig-width: 18
+#| fig-height: 6
+
+walk(all_plots[["7"]], \(plt) print(plt$combined))
+```
+
+## Save Plots
+
+```{r}
+#| label: save-plots
+
+walk(THRESHOLDS, \(t) {
+  td <- threshold_data[[as.character(t)]]
+  pairs <- td$dps_results |> arrange(dps_rank)
+  plots <- all_plots[[as.character(t)]]
+
+  subdir <- here(glue("UMAP/lite/scatter/output/fig_tbl/threshold{t}"))
+  fs::dir_create(subdir)
+
+  iwalk(plots, \(plt, i) {
+    rank_str <- sprintf("%02d", pairs$dps_rank[i])
+
+    ggsave(
+      here(subdir, glue("scatter_rank{rank_str}.png")),
+      plt$scatter, width = 18, height = 6, dpi = 300,
+      bg = "white", device = ragg::agg_png
+    )
+    write_rds(plt$scatter, here(subdir, glue("scatter_rank{rank_str}.rds")))
+
+    ggsave(
+      here(subdir, glue("peak_rank{rank_str}.png")),
+      plt$peak, width = 6, height = 6, dpi = 300,
+      bg = "white", device = ragg::agg_png
+    )
+    write_rds(plt$peak, here(subdir, glue("peak_rank{rank_str}.rds")))
+  })
+})
+
+message("Saved scatter and peak plots to fig_tbl/scatter/")
+```

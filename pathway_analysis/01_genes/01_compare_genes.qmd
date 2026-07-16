@@ -1,0 +1,165 @@
+---
+title: "Compare Genes Across Dementia Transitions"
+params:
+  top_n: 1000
+editor_options: 
+  chunk_output_type: console
+---
+
+## Load Packages
+
+```{r}
+#| label: load-packages
+#| message: false
+#| warning: false
+
+pacman::p_load(ComplexUpset, install = FALSE)
+
+conflicted::conflict_prefer_all("dplyr", quiet = TRUE)
+```
+
+## Load Data
+
+### Set the top number of genes
+
+```{r}
+#| label: set-top-number
+#| message: false
+
+# top_n <- 1000
+```
+
+### Get File Paths
+
+```{r}
+#| label: get-paths
+#| message: false
+
+source(here("custom_func/select_top_cg.R"))
+annot <- read_rds(here("data/upon_request/annotated_asso_wide.rds"))
+
+# Dementia transition categories (alphabetical, matching the legacy file order)
+demcats <- c("mci2incid", "normal2incid", "normal2mci", "prev", "stable_mci") |>
+  set_names()
+
+demcats
+```
+
+
+### Create a function to process each file
+
+```{r}
+#| output: false
+
+# Make a function to process each demcat's top CpG sites
+process_file <- function(top_cg) {
+  top_cg |>
+    select(cg, great_anno) |>
+    separate_longer_delim(great_anno, delim = stringr::regex(" |, ", ignore_case = TRUE)) |>
+    # Remove the rows like (+83228) or (-299) or (0)
+    filter(!str_detect(great_anno, "\\(\\+\\d+|\\-\\d+|\\(0\\)")) |>
+    rename(genes = great_anno)
+}
+
+# Test the function
+process_file(select_top_cg(annot, "normal2mci", params$top_n))
+```
+
+### Process all files
+
+```{r}
+#| label: process-all-files
+#| message: false
+
+all_genes_df <- demcats |>
+  map_dfr(~ process_file(select_top_cg(annot, .x, params$top_n)), .id = "condition")
+
+glimpse(all_genes_df)
+```
+
+## Gene number per condition
+
+```{r}
+#| label: gene-number-per-condition
+#| fig.width: 8
+#| fig.height: 6
+
+all_genes_df |>
+  group_by(condition) |>
+  summarise(n_genes = n_distinct(genes)) |>
+  arrange(desc(n_genes)) |>
+  ggplot(aes(x = n_genes, y = reorder(condition, n_genes))) +
+  geom_col() +
+  geom_text(
+    aes(label = format(n_genes, big.mark = ",")), 
+    vjust = 0, 
+    hjust = -0.1, 
+    size = 5
+  ) +
+  scale_x_continuous(expand = expansion(mult = c(0, 0.1))) +
+  labs(
+    x = "Number of Genes",
+    y = "Condition",
+    title = glue("Gene Counts per Condition (Top {params$top_n} CpGs)")
+  ) +
+  theme_minimal()
+```
+
+
+## Create UpSet Plot
+
+```{r}
+#| label: upset-plot
+#| fig.width: 12
+#| fig.height: 10
+
+upset_plot <- all_genes_df |> 
+  select(genes, condition) |> 
+  distinct() |> 
+  mutate(presence = 1) |>
+  pivot_wider(id_cols = genes, names_from = condition, values_from = presence, values_fill = 0) |> 
+  upset(
+    intersect = c("normal2mci", "stable_mci", "normal2incid", "mci2incid", "prev"),
+    name = "Dementia Transitions",
+    width_ratio=0.2,
+    min_size = 110,
+    wrap=TRUE,
+    encode_sets=FALSE,  
+    matrix = intersection_matrix( geom = geom_point(size = 1)),
+    set_sizes= upset_set_size()
+        + geom_text(aes(label=after_stat(count) %>% format(big.mark = ",")), hjust=1.05, stat='count', size = 6 / .pt)
+        # Use 2000 for top 1000, and 3500 for top 2000
+        + scale_y_continuous(n.breaks = 3, trans = "reverse", expand = expansion(mult = c(1.0, 0)))
+        + theme(axis.text.x=element_text(angle=30)),
+    base_annotations=list(
+        'Intersection size'=intersection_size(
+            text_colors=c(on_background='black', on_bar='white'),
+            text = list(size = 6 / .pt, angle = 0, hjust = 0.5, vjust = -0.3)
+        ) +
+        labs(y = "Intersection")),
+    themes=upset_default_themes(panel.grid=element_blank(), axis.text=element_text(size=6), axis.title=element_text(size=8))
+    # themes=list(default=theme(panel.grid =element_blank(), panel.background = element_blank(), panel.border = element_blank()))
+  )
+
+upset_plot
+```
+
+## Save the data
+
+```{r}
+#| label: save-data
+#| message: false
+# write_rds(all_genes_df, here(glue::glue("pathway_analysis/01_genes/top{top_n}_all_genes_df.rds")))
+fs::dir_create(here("pathway_analysis/01_genes/output"))
+write_rds(all_genes_df, here(glue("pathway_analysis/01_genes/output/top{params$top_n}_all_genes_df.rds")))
+```
+
+
+## Save the plot
+
+```{r}
+#| label: save-plot
+#| message: false
+
+write_rds(upset_plot, here(glue("pathway_analysis/01_genes/output/top{params$top_n}_all_genes_upset_plot.rds")))
+```

@@ -1,0 +1,218 @@
+---
+title: "Directionality Assessment: AGES vs ADNI/AIBL Meta-Analysis"
+params:
+  quartile_cutoff: 0.95
+---
+
+## Overview
+
+This analysis assesses whether DNA methylation effect directions are consistent between AGES and ADNI/AIBL cohorts using binomial sign tests to evaluate concordance significance.
+
+```{r}
+#| label: load-packages
+#| echo: false
+
+# Additional packages (tidyverse, here, janitor, glue loaded via .Rprofile)
+pacman::p_load(scales, install = FALSE)
+
+conflicted::conflict_prefer_all("dplyr", quiet = TRUE)
+
+source(here("custom_func/display_scientific_notation.R"))
+```
+
+```{r}
+#| label: load-data
+
+facet_data <- read_rds(here("validation/output/facet_data_pre_filter_ADNI_AIBL.rds"))
+```
+
+```{r}
+#| label: apply-quartile-filter
+
+# Apply quartile filtering per sub-dataset (cutoff_value + demcat)
+if (params$quartile_cutoff < 1) {
+  lower_q <- (1 - params$quartile_cutoff) / 2
+  upper_q <- 1 - lower_q
+
+  facet_data <- facet_data |>
+    mutate(
+      x_lower = quantile(ages_effect_size, lower_q, na.rm = TRUE),
+      x_upper = quantile(ages_effect_size, upper_q, na.rm = TRUE),
+      y_lower = quantile(log2_or, lower_q, na.rm = TRUE),
+      y_upper = quantile(log2_or, upper_q, na.rm = TRUE),
+      .by = c(cutoff_value, demcat)
+    ) |>
+    filter(
+      ages_effect_size >= x_lower & ages_effect_size <= x_upper,
+      log2_or >= y_lower & log2_or <= y_upper
+    ) |>
+    select(-x_lower, -x_upper, -y_lower, -y_upper)
+}
+```
+
+```{r}
+#| label: prepare-directionality-data
+
+directionality_data <- facet_data |>
+  mutate(
+    ages_direction = sign(ages_effect_size),
+    adni_direction = sign(log2_or),
+    concordant = ages_direction == adni_direction & ages_direction != 0 & adni_direction != 0
+  ) |>
+  summarise(
+    n_total = n(),
+    n_concordant = sum(concordant, na.rm = TRUE),
+    n_discordant = n_total - n_concordant,
+    prop_concordant = n_concordant / n_total,
+    .by = c(cutoff_value, demcat, pval_cutoff)
+  )
+```
+
+The scatter plots in the main comparison document show that several CpGs have opposing effect directions between AGES and ADNI/AIBL. To formally assess whether effect directions are more concordant than expected by chance, we perform binomial sign tests.
+
+**Analysis parameters:** Quartile cutoff = `r params$quartile_cutoff`
+
+## Binomial Sign Test
+
+For each dementia category and significance threshold combination, we test whether the proportion of CpGs with concordant effect directions (both positive or both negative) is significantly greater than 50% (what would be expected by chance).
+
+```{r}
+#| label: binomial-sign-test
+
+# Perform binomial sign test for each demcat x threshold combination
+binomial_results <- directionality_data |>
+  rowwise() |>
+  mutate(
+    binom_test = list(binom.test(n_concordant, n_total, p = 0.5, alternative = "greater")),
+    ci_lower = binom_test$conf.int[1],
+    ci_upper = binom_test$conf.int[2],
+    binom_pval = binom_test$p.value
+  ) |>
+  ungroup() |>
+  select(-binom_test) |>
+  mutate(
+    demcat = fct_relevel(demcat, "prev", "mci2incid", "normal2incid", "stable_mci", "normal2mci"),
+    significance = case_when(
+      binom_pval < 0.001 ~ "***",
+      binom_pval < 0.01 ~ "**",
+      binom_pval < 0.05 ~ "*",
+      TRUE ~ ""
+    )
+  )
+
+# Display summary table
+binomial_results |>
+  select(
+    demcat, cutoff_value, n_total, n_concordant, n_discordant,
+    prop_concordant, ci_lower, ci_upper, binom_pval, significance
+  ) |>
+  arrange(demcat, desc(cutoff_value)) |>
+  mutate(
+    prop_concordant = scales::percent(prop_concordant, accuracy = 0.1),
+    ci_95 = glue("{scales::percent(ci_lower, accuracy = 0.1)} - {scales::percent(ci_upper, accuracy = 0.1)}"),
+    binom_pval = display_scientific_notation(binom_pval)
+  ) |>
+  select(-ci_lower, -ci_upper) |>
+  knitr::kable(
+    col.names = c(
+      "Dementia Category", "Threshold (-log10)", "N Total", "N Concordant",
+      "N Discordant", "% Concordant", "P-value", "Sig.", "95% CI"
+    ),
+    caption = "Binomial sign test results for effect direction concordance between AGES and ADNI/AIBL"
+  )
+```
+
+## Interpretation
+
+A significant p-value (< 0.05) indicates that the proportion of CpGs with concordant effect directions is significantly greater than 50%, providing evidence that the AGES and ADNI/AIBL studies show consistent effect directions beyond what would be expected by chance.
+
+## Directionality Visualization
+
+```{r}
+#| label: fig-directionality-heatmap
+#| fig-width: 10
+#| fig-height: 6
+
+# Create heatmap of concordance proportions
+directionality_plot <- binomial_results |>
+  mutate(
+    threshold_label = glue("Threshold: {cutoff_value}"),
+    threshold_label = fct_reorder(threshold_label, -cutoff_value),
+    sig_label = glue("{scales::percent(prop_concordant, accuracy = 1)}{significance}")
+  ) |>
+  ggplot(aes(x = demcat, y = threshold_label, fill = prop_concordant)) +
+  geom_tile(color = "white", linewidth = 0.5) +
+  geom_text(aes(label = sig_label), size = 3.5) +
+  scale_fill_gradient2(
+    low = "#d73027",
+    mid = "#ffffbf",
+    high = "#1a9850",
+    midpoint = 0.5,
+    limits = c(0, 1),
+    labels = scales::percent
+  ) +
+  labs(
+    x = "Dementia Category",
+    y = "ADNI/AIBL P-value Threshold",
+    fill = "Proportion\nConcordant",
+    title = "Effect Direction Concordance: AGES vs ADNI/AIBL",
+    subtitle = "Binomial sign test (* p<0.05, ** p<0.01, *** p<0.001)"
+  ) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    panel.grid = element_blank(),
+    plot.title = element_text(size = 14, face = "bold")
+  )
+
+print(directionality_plot)
+```
+
+## Summary Statistics
+
+```{r}
+#| label: directionality-summary
+
+# Overall summary across all thresholds
+overall_summary <- binomial_results |>
+  summarise(
+    mean_concordance = mean(prop_concordant),
+    min_concordance = min(prop_concordant),
+    max_concordance = max(prop_concordant),
+    n_significant = sum(binom_pval < 0.05),
+    n_total_tests = n(),
+    .by = demcat
+  )
+
+overall_summary |>
+  mutate(
+    across(c(mean_concordance, min_concordance, max_concordance), ~scales::percent(., accuracy = 0.1))
+  ) |>
+  knitr::kable(
+    col.names = c(
+      "Dementia Category", "Mean Concordance", "Min Concordance",
+      "Max Concordance", "N Significant Tests", "N Total Tests"
+    ),
+    caption = "Summary of effect direction concordance across significance thresholds"
+  )
+```
+
+## Export Figures
+
+```{r}
+#| label: save-figures
+
+# Save directionality heatmap (png and rds)
+ggsave(
+  here("validation/output/fig_directionality_heatmap_ADNI_AIBL.png"),
+  directionality_plot,
+  width = 10,
+  height = 6,
+  dpi = 300,
+  bg = "white",
+  device = ragg::agg_png
+)
+write_rds(directionality_plot, here("validation/output/fig_directionality_heatmap_ADNI_AIBL.rds"))
+write_rds(binomial_results, here("validation/output/directionality_results_ADNI_AIBL.rds"))
+
+message("Figures saved to validation/output/")
+```

@@ -1,0 +1,164 @@
+---
+title: "P-value with top genes"
+---
+
+
+## Load Packages
+
+```{r}
+#| label: load-packages
+#| message: false
+#| warning: false
+
+# pacman::p_load()
+
+conflicted::conflict_prefer_all("dplyr", quiet = TRUE)
+```
+
+## Load Data
+
+### Set the top number of genes
+
+```{r}
+#| label: set-top-number
+#| message: false
+
+top_n <- 2000
+```
+
+### Get File Paths
+
+```{r}
+#| label: get-paths
+#| message: false
+
+source(here("custom_func/select_top_cg.R"))
+annot <- read_rds(here("data/upon_request/annotated_asso_wide.rds"))
+
+# Dementia transition categories
+demcats <- c("mci2incid", "normal2incid", "normal2mci", "prev", "stable_mci") |>
+  set_names()
+
+demcats
+```
+
+
+### Read the data
+
+```{r}
+#| label: read-data
+#| message: false
+
+sig_cpg_data <- demcats |>
+  imap_dfr(~ select_top_cg(annot, .y, top_n) |>
+   # Keep only the cg and the p-value for the current demcat
+   select(cg, all_of(glue::glue("nlog10_p_value_{.y}"))) |>
+   # Rename the p-value column to nlog10_p_value
+   rename(nlog10_p_value = all_of(glue::glue("nlog10_p_value_{.y}"))),
+   .id = "demcat") |>
+   # Relevel demcat
+   mutate(demcat = fct_relevel(demcat, "normal2mci", "stable_mci", "normal2incid", "mci2incid", "prev"))
+
+glimpse(sig_cpg_data)
+```
+
+## Create a new column for the gene rank
+
+```{r}
+#| label: create-gene-rank
+#| message: false
+
+sig_cpg_rank <- sig_cpg_data |>
+  group_by(demcat) |>
+  arrange(desc(nlog10_p_value), .by_group = TRUE) |>
+  mutate(gene_rank = row_number()) |>
+  ungroup()
+
+glimpse(sig_cpg_rank)
+```
+
+## Number of DMPs
+
+```{r}
+#| label: number-of-dmp
+#| message: false
+
+number_of_dmp <- sig_cpg_rank |>
+  group_by(demcat) |>
+  summarise(n = sum(nlog10_p_value > 8)) |>
+  mutate(
+    x = 500,
+    y = 8.5,
+    label = glue::glue("{n} CpGs")
+  )
+
+number_of_dmp
+```
+
+## Select points to display their p-values
+
+```{r}
+#| label: select-points-to-display
+#| message: false
+
+pval_to_display <- sig_cpg_rank |>
+  filter(gene_rank %in% c(1, 1000, 2000))
+
+pval_to_display
+```
+
+## Plot the p-value with top genes
+
+
+```{r}
+#| label: plot-pval-with-top-genes
+#| message: false
+#| fig-width: 10
+#| fig-height: 8
+
+plot_pval_with_top_genes <- sig_cpg_rank |>
+  ggplot(aes(x = gene_rank, y = nlog10_p_value)) +
+  geom_point() +
+  geom_point(data = pval_to_display, color = "darkred", shape = 18, size = 5) +
+  geom_text(data = pval_to_display, aes(label = round(nlog10_p_value, 2)),
+            hjust = 0.5, vjust = -1.5, color = "darkred", size = 12 / .pt) +
+  geom_hline(yintercept = 8, linetype = "dashed", color = "steelblue") +
+  # Add text annotation for p-value threshold
+  annotate("label", x = 1200, y = 8,
+        #    label = "1.0 %*% 10^{-8}~(threshold)",
+           label = "1.0 %*% 10^{-8}",
+           parse = TRUE,
+           hjust = 0,
+           vjust = 0.5,
+           size = 12 / .pt,
+           fill = "steelblue",
+           colour = "white",
+           fontface = "bold") +
+  geom_text(data = number_of_dmp, aes(x = x, y = y, label = label),
+             hjust = 0, vjust = 0.5, color = "steelblue", size = 12 / .pt) +
+  facet_wrap(~demcat, ncol = 3, scales = "free_y") +
+  scale_y_continuous(expand = expansion(mult = c(0.05, 0.15))) +
+  scale_x_continuous(expand = expansion(mult = c(0.1, 0.1))) +
+  labs(x = "Top gene number", y = "-log10(p-value)")
+
+plot_pval_with_top_genes
+```
+
+## Save the plot
+
+```{r}
+#| label: save-plot
+#| message: false
+
+fs::dir_create(here("pathway_analysis/01_genes/output"))
+write_rds(plot_pval_with_top_genes, here("pathway_analysis/01_genes/output/pval_with_top_genes_plot.rds"))
+
+ggsave(
+  here("pathway_analysis/01_genes/output/fig_sup_pval_with_top_genes_plot.png"),
+  plot_pval_with_top_genes,
+  width = 10,
+  height = 8,
+  dpi = 300,
+  device = grDevices::png
+)
+```

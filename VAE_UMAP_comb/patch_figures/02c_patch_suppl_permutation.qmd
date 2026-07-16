@@ -1,0 +1,103 @@
+---
+title: "Patch supplementary figures — permutation analysis"
+---
+
+## Overview
+
+Generate supplementary figures for permutation analysis results. Loads pre-generated ggplot2 RDS objects for null distributions and p-value heatmap, applies consistent theming, and saves high-resolution PNGs as individual supplementary figures.
+
+```{r}
+#| label: load-packages
+#| echo: false
+
+pacman::p_load(patchwork, ggtext, install = FALSE)
+```
+
+```{r}
+#| label: setup-theme
+
+source(here("custom_func/theme_main_fig.R"))
+set_pub_geom_defaults()
+
+fs::dir_create(here("VAE_UMAP_comb/patch_figures/output"))
+```
+
+## VAE null distribution (path2D DPS, THR8)
+
+```{r}
+#| label: suppl-fig-vae-null-dist
+
+fig_vae_null <- read_rds(
+  here("VAE/lite/permutation/output/fig_tbl/threshold_8/fig_null_distribution_path2d.rds")
+)
+
+fig_vae_null <- fig_vae_null + theme_main_fig() +
+  theme(
+    plot.title = element_blank(),
+    plot.subtitle = element_blank()
+  )
+fig_vae_null <- rescale_layer_params(fig_vae_null, size_scale = 0.6, linewidth_scale = 0.6)
+
+ggsave(here("VAE_UMAP_comb/patch_figures/output/fig_suppl_vae_null_distribution.png"),
+       fig_vae_null,
+       width = 6.5, height = 5.2, dpi = 600, bg = "white",
+       device = grDevices::png)
+```
+
+## UMAP null distribution (path2D DPS, THR8)
+
+```{r}
+#| label: suppl-fig-umap-null-dist
+
+fig_umap_null <- read_rds(
+  here("UMAP/lite/permutation/output/fig_tbl/threshold_8/fig_null_distribution_path2d.rds")
+)
+
+fig_umap_null <- fig_umap_null + theme_main_fig() +
+  theme(
+    plot.title = element_blank(),
+    plot.subtitle = element_blank()
+  )
+fig_umap_null <- rescale_layer_params(fig_umap_null, size_scale = 0.6, linewidth_scale = 0.6)
+
+ggsave(here("VAE_UMAP_comb/patch_figures/output/fig_suppl_umap_null_distribution.png"),
+       fig_umap_null,
+       width = 6.5, height = 5.2, dpi = 600, bg = "white",
+       device = grDevices::png)
+```
+
+## Permutation p-value heatmap
+
+```{r}
+#| label: suppl-fig-perm-heatmap
+
+fig_perm_heatmap <- read_rds(
+  here("VAE_UMAP_comb/output/fig_perm_pvalue_heatmap.rds")
+)
+
+fig_perm_heatmap <- fig_perm_heatmap + theme_main_fig() +
+  theme(
+    plot.title = element_blank(),
+    plot.subtitle = element_blank()
+  )
+fig_perm_heatmap <- rescale_layer_params(fig_perm_heatmap, size_scale = 0.6, linewidth_scale = 0.6)
+
+ggsave(here("VAE_UMAP_comb/patch_figures/output/fig_suppl_perm_heatmap.png"),
+       fig_perm_heatmap,
+       width = 6.5, height = 5.2, dpi = 600, bg = "white",
+       device = grDevices::png)
+```
+
+## Verify output
+
+```{r}
+#| label: verify-output
+
+output_files <- fs::dir_ls(
+  here("VAE_UMAP_comb/patch_figures/output"),
+  glob = "*suppl_vae_null*|*suppl_umap_null*|*suppl_perm_heatmap*"
+)
+fs::file_info(output_files) |>
+  select(path, size, modification_time) |>
+  mutate(path = basename(path))
+```

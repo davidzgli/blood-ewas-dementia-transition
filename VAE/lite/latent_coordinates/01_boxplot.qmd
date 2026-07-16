@@ -1,0 +1,368 @@
+---
+title: "VAE Latent Coordinates Boxplot (Lite)"
+subtitle: "Parameterized by threshold (default: 8)"
+params:
+  threshold: 8
+---
+
+## Overview
+
+Boxplot visualizations for VAE latent coordinates comparing dementia categories for threshold `r params$threshold`. Includes t-tests vs stable_normal and ANOVA for multi-category comparisons.
+
+```{r}
+#| label: load-packages
+#| echo: false
+
+pacman::p_load(ggh4x, install = FALSE)
+
+conflicted::conflict_prefer_all("dplyr", quiet = TRUE)
+```
+
+## Load Data
+
+```{r}
+#| label: load-data
+
+embedding <- read_rds(here(glue("VAE/lite/output/embedding_threshold_{params$threshold}.rds")))
+
+vae_long <- embedding |>
+  pivot_longer(
+    cols = vae_1:vae_6,
+    names_to = "vae_dir",
+    values_to = "vae_value"
+  )
+
+glimpse(vae_long)
+```
+
+## T-test: Dementia Categories vs stable_normal
+
+```{r}
+#| label: compute-ttest
+
+ttest_result <- list()
+
+for (dc in str_subset(unique(vae_long$demcat), "^stable_normal$", negate = TRUE)) {
+  ttest_result[[dc]] <-
+    vae_long |>
+    filter(demcat %in% c("stable_normal", dc)) |>
+    summarise(
+      t = t.test(vae_value ~ demcat)$statistic,
+      p = t.test(vae_value ~ demcat)$p.value,
+      .by = vae_dir
+    )
+}
+
+ttest_result <-
+  ttest_result |>
+  bind_rows(.id = "demcat") |>
+  mutate(
+    label = sprintf(" italic(P) = %.2e", p) %>%
+      str_replace_all("e", " %*% 10^") %>%
+      str_replace_all("=", "=="),
+    demcat = fct_relevel(demcat, "stable_normal", "normal2mci", "stable_mci",
+                         "normal2incid", "mci2incid", "prev_dementia")
+  )
+
+ttest_result
+```
+
+## ANOVA
+
+```{r}
+#| label: compute-anova
+
+anova_result <-
+  vae_long |>
+  summarise(
+    p = anova(lm(vae_value ~ demcat))$`Pr(>F)`[1],
+    .by = vae_dir
+  ) |>
+  mutate(
+    label = sprintf("italic(P) = %.2e", p) %>%
+      str_replace_all("e", " %*% 10^") %>%
+      str_replace_all("=", "==")
+  )
+
+anova_result
+```
+
+## Boxplot Function
+
+```{r}
+#| output: false
+
+make_boxplot_vae <- function(.data, text_size = 4, stat_result = ttest_result, ...) {
+  .data |>
+    ggplot(aes(x = demcat, y = vae_value)) +
+    geom_boxplot(outliers = FALSE, notch = TRUE) +
+    geom_text(
+      data = stat_result,
+      aes(label = label),
+      x = I(0.5), y = I(0.95),
+      hjust = 0, vjust = 1,
+      color = "darkred", size = text_size, size.unit = "pt",
+      parse = TRUE
+    ) +
+    facet_wrap(~vae_dir, nrow = 1, scales = "free") +
+    labs(x = "Dementia category", y = "VAE latent value")
+}
+```
+
+## Initialize Boxplot List
+
+```{r}
+#| output: false
+
+boxplot_list <- list()
+```
+
+## Individual Trajectory Boxplots
+
+```{r}
+#| label: fig-boxplot-prev
+#| fig.width: 10
+#| fig.height: 4
+
+boxplot_list$prev <-
+  vae_long |>
+  filter(demcat %in% c("stable_normal", "prev_dementia")) |>
+  make_boxplot_vae(
+    text_size = 6,
+    stat_result = filter(ttest_result, demcat == "prev_dementia") %>%
+      mutate(label = str_remove(label, " italic\\(P\\) == "))
+  )
+
+boxplot_list$prev
+```
+
+```{r}
+#| label: fig-boxplot-stable_mci
+#| fig.width: 10
+#| fig.height: 4
+
+boxplot_list$stable_mci <-
+  vae_long |>
+  filter(demcat %in% c("stable_normal", "stable_mci")) |>
+  make_boxplot_vae(
+    text_size = 6,
+    stat_result = filter(ttest_result, demcat == "stable_mci") %>%
+      mutate(label = str_remove(label, " italic\\(P\\) == "))
+  )
+
+boxplot_list$stable_mci
+```
+
+```{r}
+#| label: fig-boxplot-normal2incid
+#| fig.width: 10
+#| fig.height: 4
+
+boxplot_list$normal2incid <-
+  vae_long |>
+  filter(demcat %in% c("stable_normal", "normal2incid")) |>
+  make_boxplot_vae(
+    text_size = 6,
+    stat_result = filter(ttest_result, demcat == "normal2incid") %>%
+      mutate(label = str_remove(label, " italic\\(P\\) == "))
+  )
+
+boxplot_list$normal2incid
+```
+
+## All Dementia Categories Grid
+
+```{r}
+#| label: prepare-all-demcat
+
+dementia_categories <-
+  vae_long |>
+  pull(demcat) |>
+  unique() |>
+  discard(\(x) x == "stable_normal")
+
+demcat_skeleton <-
+  tibble(
+    demcat_grand = rep(dementia_categories, 2),
+    demcat_sub = c(as.character(dementia_categories), rep("stable_normal", length(dementia_categories)))
+  ) |>
+  mutate(demcat_sub = fct_relevel(demcat_sub, levels(demcat_grand))) |>
+  arrange(demcat_grand, demcat_sub)
+
+boxplot_data_all_demcat_together <-
+  demcat_skeleton |>
+  rowwise() |>
+  mutate(
+    data = vae_long %>%
+      select(subject_id, demcat, vae_dir, vae_value) %>%
+      filter(demcat == demcat_sub) |>
+      lst()
+  ) |>
+  unnest(data) |>
+  mutate(demcat_sub = fct_collapse(
+    demcat_sub,
+    stable_normal = "stable_normal",
+    non_normal = c("normal2mci", "stable_mci", "normal2incid", "mci2incid", "prev_dementia")
+  ))
+```
+
+```{r}
+#| label: fig-boxplot-all-demcat
+#| fig.width: 11
+#| fig.height: 11
+
+boxplot_list$all_demcat <-
+  boxplot_data_all_demcat_together |>
+  ggplot(aes(x = demcat_sub, y = vae_value)) +
+  geom_boxplot(outliers = FALSE, notch = TRUE) +
+  geom_text(
+    data = ttest_result %>% rename(demcat_grand = demcat),
+    aes(label = label),
+    x = I(0.5), y = I(0.95),
+    hjust = 0, vjust = 1,
+    color = "darkred", size = 6, size.unit = "pt",
+    parse = TRUE
+  ) +
+  facet_grid2(rows = vars(demcat_grand), cols = vars(vae_dir), scales = "free_y", independent = "y") +
+  labs(x = "Dementia category", y = "VAE latent value")
+
+boxplot_list$all_demcat
+```
+
+## All Dimensions Boxplot
+
+```{r}
+#| label: fig-boxplot-all-dim
+#| fig.width: 18
+#| fig.height: 6
+
+vae_displayed <- glue("vae_{1:6}")
+
+vae_ordered <- anova_result |>
+  filter(vae_dir %in% vae_displayed) |>
+  arrange(p) |>
+  pull(vae_dir)
+
+all_dim_base <-
+  vae_long |>
+  filter(vae_dir %in% vae_displayed) |>
+  mutate(
+    vae_dir = factor(vae_dir, levels = vae_ordered),
+    demcat = fct_relevel(demcat, "normal2mci", "stable_normal", "stable_mci",
+                         "normal2incid", "mci2incid", "prev_dementia")
+  ) |>
+  ggplot(aes(x = demcat, y = vae_value)) +
+  geom_boxplot(notch = TRUE, outliers = FALSE) +
+  geom_text(
+    data = anova_result |>
+      filter(vae_dir %in% vae_displayed) |>
+      mutate(vae_dir = factor(vae_dir, levels = vae_ordered)),
+    aes(label = label),
+    x = I(0.5), y = I(0.95),
+    hjust = 0, vjust = 1,
+    color = "darkred", size = 6, size.unit = "pt",
+    parse = TRUE
+  ) +
+  labs(x = "Dementia category", y = "VAE latent value")
+
+boxplot_list$one_dim_all_1row <-
+  all_dim_base + facet_wrap(~vae_dir, nrow = 1, scales = "free_y")
+
+boxplot_list$one_dim_all_2row <-
+  all_dim_base + facet_wrap(~vae_dir, nrow = 2, scales = "free_y")
+
+boxplot_list$one_dim_all_1row
+boxplot_list$one_dim_all_2row
+```
+
+## Selected Dimensions
+
+Show the 4 most significant dimensions based on ANOVA p-values.
+
+```{r}
+#| label: fig-boxplot-selected-dim
+#| fig.width: 14
+#| fig.height: 6
+
+vae_selected <- anova_result |>
+  arrange(p) |>
+  slice_head(n = 4) |>
+  pull(vae_dir)
+
+selected_dim_base <-
+  vae_long |>
+  filter(vae_dir %in% vae_selected) |>
+  mutate(
+    vae_dir = factor(vae_dir, levels = vae_selected),
+    demcat = fct_relevel(demcat, "normal2mci", "stable_normal", "stable_mci",
+                         "normal2incid", "mci2incid", "prev_dementia")
+  ) |>
+  ggplot(aes(x = demcat, y = vae_value)) +
+  geom_boxplot(notch = TRUE, outliers = FALSE) +
+  geom_text(
+    data = anova_result |>
+      filter(vae_dir %in% vae_selected) |>
+      mutate(vae_dir = factor(vae_dir, levels = vae_selected)),
+    aes(label = label),
+    x = I(0.5), y = I(0.95),
+    hjust = 0, vjust = 1,
+    color = "darkred", size = 6, size.unit = "pt",
+    parse = TRUE
+  ) +
+  labs(x = "Dementia category", y = "VAE latent value")
+
+boxplot_list$one_dim_selected_1row <-
+  selected_dim_base + facet_wrap(~vae_dir, nrow = 1, scales = "free_y")
+
+boxplot_list$one_dim_selected_2row <-
+  selected_dim_base + facet_wrap(~vae_dir, nrow = 2, scales = "free_y")
+
+boxplot_list$one_dim_selected_1row
+boxplot_list$one_dim_selected_2row
+```
+
+## ANOVA Bar Plot
+
+```{r}
+#| label: fig-anova-vae
+
+boxplot_list$anova_vae <-
+  anova_result |>
+  mutate(nlog10_p = -log10(p)) |>
+  mutate(vae_dir = fct_reorder(vae_dir, p, .desc = TRUE)) |>
+  ggplot(aes(x = nlog10_p, y = vae_dir)) +
+  geom_col() +
+  geom_text(aes(label = label), hjust = 0, vjust = 0.5, size = 10, size.unit = "pt", parse = TRUE) +
+  scale_x_continuous(expand = expansion(mult = c(0.01, 0.3))) +
+  labs(x = "-log10(ANOVA p-value)", y = "VAE dimension")
+
+boxplot_list$anova_vae
+```
+
+## Save Boxplots
+
+```{r}
+#| output: false
+
+fig_dir <- here("VAE/lite/latent_coordinates/output/fig_tbl")
+fs::dir_create(fig_dir)
+
+save_variants <- list(
+  one_dim_all_1row      = list(w = 18, h = 4),
+  one_dim_all_2row      = list(w = 10, h = 6),
+  one_dim_selected_1row = list(w = 14, h = 4),
+  one_dim_selected_2row = list(w = 8,  h = 6)
+)
+
+iwalk(save_variants, \(dims, name) {
+  ggsave(
+    here(fig_dir, glue("fig_{name}_threshold_{params$threshold}.png")),
+    plot = boxplot_list[[name]],
+    width = dims$w, height = dims$h,
+    device = grDevices::png, dpi = 300
+  )
+  write_rds(boxplot_list[[name]], here(fig_dir, glue("fig_{name}_threshold_{params$threshold}.rds")))
+})
+
+write_rds(boxplot_list, here(fig_dir, glue("boxplot_list_threshold_{params$threshold}.rds")))
+```

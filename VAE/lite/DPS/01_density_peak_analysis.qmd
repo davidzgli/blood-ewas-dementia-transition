@@ -1,0 +1,230 @@
+---
+title: "Density Peak Analysis (Lite)"
+subtitle: "Compute centroids and correlations for VAE thresholds 7 & 8"
+---
+
+## Overview
+
+Compute density peaks, centroids, Spearman correlations, normal-repeated structure, and plot limits for 2 thresholds x 15 dimension pairs = 30 iterations.
+
+## Setup
+
+```{r}
+#| label: load-packages
+#| echo: false
+
+conflicted::conflict_prefer_all("dplyr", quiet = TRUE)
+```
+
+```{r}
+#| label: load-custom-functions
+
+source(here("custom_func/find_highest_density_points.R"))
+```
+
+## Constants
+
+```{r}
+#| label: constants
+
+THRESHOLDS <- c(7, 8)
+
+trajectory_colors <- c(
+  stable_normal = "#1f77b4",
+  normal2mci = "#ff7f0e",
+  stable_mci = "#2ca02c",
+  normal2incid = "#d62728",
+  mci2incid = "#9467bd",
+  prev_dementia = "#8c564b"
+)
+
+dementia_categories <- c(
+  "normal2mci", "stable_mci", "normal2incid",
+  "mci2incid", "prev_dementia"
+)
+```
+
+## Load Embeddings
+
+```{r}
+#| label: load-embeddings
+
+embeddings <- THRESHOLDS |>
+  set_names(paste0("threshold_", THRESHOLDS)) |>
+  map(\(t) read_rds(here(glue("VAE/lite/output/embedding_threshold_{t}.rds"))))
+
+walk2(names(embeddings), embeddings, \(nm, emb) {
+  message(glue("{nm}: {nrow(emb)} subjects"))
+})
+```
+
+## Calculate Plot Limits
+
+Quantile-based plot limits (0.0005, 0.9995) for each VAE dimension per threshold.
+
+```{r}
+#| label: calculate-plot-limits
+
+plot_limits_list <- map(embeddings, \(data) {
+  data |>
+    select(starts_with("vae_")) |>
+    # reframe(across(everything(), \(x) quantile(x, probs = c(0.0005, 0.9995))))
+    reframe(across(everything(), \(x) quantile(x, probs = c(0.005, 0.995))))
+})
+
+message(glue("Plot limits computed for {length(plot_limits_list)} thresholds"))
+```
+
+## Create Normal-Repeated Structure
+
+Pair each dementia category with stable_normal for downstream visualization.
+
+```{r}
+#| label: create-normal-repeated
+
+normal_repeated_list <- map(embeddings, \(data) {
+  dementia_categories |>
+    set_names() |>
+    map(\(cat) data |> filter(demcat %in% c("stable_normal", cat))) |>
+    list_rbind(names_to = "demcat_grand") |>
+    mutate(
+      demcat_sub = if_else(demcat == "stable_normal", "stable_normal", "demented"),
+      demcat_grand = fct_relevel(demcat_grand, dementia_categories)
+    )
+})
+
+message(glue("Normal-repeated structure created for {length(normal_repeated_list)} thresholds"))
+```
+
+## Create Dimension Pair Backbone
+
+```{r}
+#| label: create-backbone
+
+backbone <- expand_grid(
+  threshold = names(embeddings),
+  dimx = glue("vae_{1:6}"),
+  dimy = glue("vae_{1:6}")
+) |>
+  filter(dimx < dimy)
+
+message(glue("Backbone rows: {nrow(backbone)} ({length(THRESHOLDS)} thresholds x 15 dim pairs)"))
+```
+
+## Density Peak Computation
+
+```{r}
+#| label: find-density-peaks
+
+tictoc::tic("Density peak computation")
+
+density_peaks_list <- backbone |>
+  pmap(\(threshold, dimx, dimy) {
+    data <- embeddings[[threshold]]
+
+    result <- try(
+      find_highest_density_points(
+        data,
+        dim_cols = c(dimx, dimy),
+        category_col = "demcat",
+        density_threshold = 0.9,
+        grid_resolution = 200,
+        bandwidth = "nrd0",
+        min_points = 20
+      ),
+      silent = TRUE
+    )
+
+    if (inherits(result, "try-error")) return(NULL)
+
+    result |>
+      mutate(threshold = threshold, dimx = dimx, dimy = dimy)
+  }) |>
+  discard(is.null) |>
+  list_rbind()
+
+tictoc::toc()
+
+glimpse(density_peaks_list)
+```
+
+## Calculate Centroids
+
+```{r}
+#| label: calculate-centroids
+
+centroids <- density_peaks_list |>
+  summarise(
+    n_high_density_points = n(),
+    x_mean = mean(x_highest_densities),
+    y_mean = mean(y_highest_densities),
+    x_median = median(x_highest_densities),
+    y_median = median(y_highest_densities),
+    x_sd = sd(x_highest_densities, na.rm = TRUE),
+    y_sd = sd(y_highest_densities, na.rm = TRUE),
+    x_range = max(x_highest_densities) - min(x_highest_densities),
+    y_range = max(y_highest_densities) - min(y_highest_densities),
+    mean_density = mean(density_value, na.rm = TRUE),
+    .by = c(threshold, dimx, dimy, demcat)
+  ) |>
+  mutate(
+    group = "trajectory_evolution",
+    spread_radius = replace_na(sqrt(x_sd^2 + y_sd^2), 0)
+  )
+
+glimpse(centroids)
+```
+
+## Compute Correlation with Dementia Trajectory
+
+```{r}
+#| label: compute-correlation
+
+progression_order <- c(
+  "normal2mci", "stable_normal", "stable_mci",
+  "normal2incid", "mci2incid", "prev_dementia"
+)
+
+cor_centroids_with_demcat <- centroids |>
+  mutate(
+    demcat = fct_relevel(demcat, progression_order),
+    demcat_int = as.integer(demcat)
+  ) |>
+  filter(demcat != "stable_normal") |>
+  summarise(
+    across(matches("_mean|_median"), \(x) cor(x, demcat_int, method = "spearman")),
+    .by = c(threshold, dimx, dimy)
+  )
+
+glimpse(cor_centroids_with_demcat)
+```
+
+## Save Results
+
+```{r}
+#| label: save-results
+
+output_dir <- here("VAE/lite/DPS/output")
+fs::dir_create(output_dir)
+
+# Save per-threshold files
+for (threshold in names(embeddings)) {
+  t_num <- str_extract(threshold, "\\d+")
+
+  centroids |>
+    filter(threshold == !!threshold) |>
+    write_rds(here(output_dir, glue("centroids_threshold_{t_num}.rds")))
+
+  cor_centroids_with_demcat |>
+    filter(threshold == !!threshold) |>
+    write_rds(here(output_dir, glue("cor_centroids_threshold_{t_num}.rds")))
+
+  normal_repeated_list[[threshold]] |>
+    write_rds(here(output_dir, glue("normal_repeated_threshold_{t_num}.rds")))
+
+  plot_limits_list[[threshold]] |>
+    write_rds(here(output_dir, glue("plot_limits_threshold_{t_num}.rds")))
+}
+
+message("Saved per-threshold files: centroids, cor_centroids, normal_repeated, plot_limits")
+```

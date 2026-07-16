@@ -1,0 +1,177 @@
+---
+title: "Permutation Test: Path2D DPS (Lite)"
+subtitle: "1000 label permutations for thresholds 7 & 8"
+---
+
+## Overview
+
+Label permutation test to validate dementia progression patterns. Shuffles demcat labels 1000 times and computes Path2D DPS for all 15 dimension pairs, building a null distribution for empirical p-value computation.
+
+## Configuration
+
+```{r}
+#| label: config
+
+N_PERMUTATIONS <- 1000
+THRESHOLDS <- c(7, 8)
+SEED_BASE <- 42
+```
+
+## Setup
+
+```{r}
+#| label: load-packages
+#| echo: false
+
+pacman::p_load(furrr, fs, install = FALSE)
+
+conflicted::conflict_prefer_all("dplyr", quiet = TRUE)
+```
+
+```{r}
+#| label: load-custom-functions
+
+source(here("custom_func/find_highest_density_points.R"))
+source(here("custom_func/compute_spatial_dps.R"))
+```
+
+```{r}
+#| label: setup-parallel
+
+plan(multicore, workers = 10)
+message(glue("Parallel backend: {nbrOfWorkers()} workers"))
+```
+
+## Constants
+
+```{r}
+#| label: constants
+
+progression_order <- c(
+  "normal2mci", "stable_normal", "stable_mci",
+  "normal2incid", "mci2incid", "prev_dementia"
+)
+```
+
+## Dimension Pair Backbone
+
+```{r}
+#| label: dim-pairs
+
+dim_pairs <- expand_grid(
+  dimx = glue("umap_{1:6}"),
+  dimy = glue("umap_{1:6}")
+) |>
+  filter(dimx < dimy)
+
+message(glue("Dimension pairs: {nrow(dim_pairs)}"))
+```
+
+## Generate Permutation Seeds
+
+```{r}
+#| label: perm-seeds
+
+set.seed(SEED_BASE)
+perm_seeds <- sample.int(1e6, N_PERMUTATIONS)
+message(glue("Generated {N_PERMUTATIONS} permutation seeds"))
+```
+
+## Run Permutations
+
+Process both thresholds sequentially, each with parallel permutations.
+
+```{r}
+#| label: run-permutations
+
+output_dir <- here("UMAP/lite/output")
+fs::dir_create(output_dir)
+
+for (threshold in THRESHOLDS) {
+  message(glue("\n=== Processing threshold {threshold} ==="))
+
+  # Load embedding
+  embedding <- read_rds(here(output_dir, glue("embedding_threshold_{threshold}.rds")))
+  message(glue("Embedding: {nrow(embedding)} subjects"))
+
+  tictoc::tic(glue("Threshold {threshold} permutations"))
+
+  perm_results <- future_map(seq_len(N_PERMUTATIONS), function(perm_id) {
+    # Shuffle demcat labels
+    set.seed(perm_seeds[perm_id])
+    perm_embedding <- embedding |>
+      mutate(demcat = sample(demcat))
+
+    # Process all 15 dimension pairs
+    pair_results <- pmap(dim_pairs, function(dimx, dimy) {
+      # Find density peaks
+      peaks <- try(
+        find_highest_density_points(
+          perm_embedding,
+          dim_cols = c(dimx, dimy),
+          category_col = "demcat",
+          density_threshold = 0.9,
+          grid_resolution = 200,
+          bandwidth = "nrd0",
+          min_points = 20
+        ),
+        silent = TRUE
+      )
+
+      if (inherits(peaks, "try-error")) return(NULL)
+
+      # Compute centroids
+      centroids <- peaks |>
+        summarise(
+          x_mean = mean(x_highest_densities),
+          y_mean = mean(y_highest_densities),
+          .by = demcat
+        )
+
+      # Check all categories present
+      ordered_centroids <- centroids |>
+        filter(demcat %in% progression_order) |>
+        mutate(
+          demcat = factor(demcat, levels = progression_order),
+          order_int = as.integer(demcat)
+        ) |>
+        arrange(order_int)
+
+      if (nrow(ordered_centroids) != length(progression_order)) return(NULL)
+
+      # Compute Path2D DPS only
+      path2d <- compute_path2d_dps(ordered_centroids$x_mean, ordered_centroids$y_mean)
+
+      tibble(perm_id = perm_id, dimx = dimx, dimy = dimy, path2d_dps = path2d)
+    })
+
+    discard(pair_results, is.null) |> list_rbind()
+  }, .progress = TRUE, .options = furrr_options(seed = NULL))
+
+  tictoc::toc()
+
+  # Combine and save
+  perm_dps <- list_rbind(perm_results)
+  message(glue("Permutation DPS rows: {nrow(perm_dps)} (expected: {N_PERMUTATIONS * nrow(dim_pairs)})"))
+
+  write_rds(perm_dps, here(output_dir, glue("permutation_dps_threshold_{threshold}.rds")))
+  message(glue("Saved: permutation_dps_threshold_{threshold}.rds"))
+}
+```
+
+```{r}
+#| label: cleanup-parallel
+
+plan(sequential)
+```
+
+## Verify Outputs
+
+```{r}
+#| label: verify
+
+walk(THRESHOLDS, \(t) {
+  perm <- read_rds(here(output_dir, glue("permutation_dps_threshold_{t}.rds")))
+  message(glue("Threshold {t}: {nrow(perm)} rows, {n_distinct(perm$perm_id)} permutations"))
+})
+```

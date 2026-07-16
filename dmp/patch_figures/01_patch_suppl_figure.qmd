@@ -1,0 +1,79 @@
+---
+title: "Patch supplementary Manhattan plot"
+---
+
+## Overview
+
+Patch the Manhattan plot (Supplementary Fig. 5) for manuscript publication: apply consistent theme sizing and export as high-resolution PNG.
+
+```{r}
+#| label: load-packages
+#| echo: false
+
+# ggtext loaded via .Rprofile dependency chain; no extra packages needed
+source(here("custom_func/theme_main_fig.R"))
+set_pub_geom_defaults()
+```
+
+## Load Plot Object
+
+Load the pre-generated Manhattan plot RDS.
+
+```{r}
+#| label: load-plot
+
+fig_manhattan <- read_rds(
+ here("dmp/output/manhattan_plot_dementia_relevance.rds")
+)
+```
+
+## Patch Supplementary Fig 5 (Manhattan)
+
+Adjust legend text sizes and rescale geometric elements for publication column width.
+
+```{r}
+#| label: patch-fig5
+
+fig_manhattan_patched <- fig_manhattan +
+ theme(
+   legend.text = element_text(size = 10),
+   legend.title = element_text(size = 11)
+ )
+fig_manhattan_patched <- rescale_layer_params(fig_manhattan_patched, size_scale = 0.6, linewidth_scale = 0.6)
+```
+
+## Save Patched Figure
+
+Export as high-resolution PNG using `grDevices::png` (not `ragg::agg_png`) because the plot uses plotmath `%*%` which ragg renders as a centered dot instead of the multiplication sign.
+
+```{r}
+#| label: save-figure
+
+fs::dir_create(here("dmp/patch_figures/output"))
+
+ggsave(
+ here("dmp/patch_figures/output/fig_suppl_5_manhattan.png"),
+ fig_manhattan_patched,
+ width = 6.5,
+ height = 9.0,
+ dpi = 600,
+ bg = "white",
+ device = grDevices::png
+)
+
+message("Patched Manhattan plot saved to dmp/patch_figures/output/")
+```
+
+## Verify Output
+
+List output files with sizes and modification times.
+
+```{r}
+#| label: verify-output
+
+output_files <- fs::dir_ls(here("dmp/patch_figures/output"), glob = "*.png")
+file_info <- fs::file_info(output_files)
+file_info |>
+ select(path, size, modification_time) |>
+ mutate(path = basename(path))
+```

@@ -1,0 +1,126 @@
+---
+title: "VAE Cross-Validation Illustration"
+subtitle: "Panel b for VAE supplementary figures"
+format: 
+  html:
+    embed-resources: true
+---
+
+```{r}
+#| label: setup
+#| include: false
+
+pacman::p_load(tidyverse, ggtext, glue, here, fs, patchwork, install = FALSE)
+
+# Set default theme to be clean for publication
+theme_set(theme_minimal(base_size = 12) +
+          theme(panel.grid = element_blank(),
+                axis.text = element_blank(),
+                axis.title = element_blank()))
+```
+
+## Generate 5-Fold Cross-Validation Illustration
+
+```{r}
+#| label: fig-cv-viz
+#| fig-width: 10
+#| fig-height: 8
+
+# Data for 5 folds
+folds_data <- expand_grid(
+  fold = 1:5,
+  set = factor(1:5)
+) |>
+  mutate(
+    type = if_else(as.numeric(set) == fold, "Validation", "Training")
+  )
+
+# Define stratification representation (6 colored bars per subset)
+strat_data <- expand_grid(
+  set = factor(1:5),
+  category = factor(1:6)
+) |>
+  mutate(
+    cat_num = as.numeric(category)
+  )
+
+# Colors for CV sets
+cv_colors <- c("Training" = "#e3f2fd", "Validation" = "#fff3e0")
+cv_border <- c("Training" = "#1e88e5", "Validation" = "#fb8c00")
+
+# Colors for Stratification (6 distinct professional colors)
+strat_colors <- c("#66c2a5", "#fc8d62", "#8da0cb", "#e78ac3", "#a6d854", "#ffd92f")
+
+# Legend data for categories - Capitalized for publication
+cat_legend <- tibble(
+  num = 1:6,
+  label = c("Stable_normal", "Normal2mci", "Stable_mci", "Normal2incid", "Mci2incid", "Prev")
+)
+
+# Plot the folds
+p_cv <- ggplot() +
+  # Draw the Training/Validation tiles
+  geom_tile(data = folds_data, aes(x = as.numeric(set), y = fold, fill = type, color = type), 
+            width = 0.8, height = 0.6, linewidth = 0.8) +
+  geom_text(data = folds_data, aes(x = as.numeric(set), y = fold, label = type), 
+            size = 3.5, fontface = "bold") +
+  
+  # Draw mini stratification bars
+  geom_rect(data = strat_data, 
+            aes(xmin = as.numeric(set) - 0.4 + (as.numeric(category)-1)*0.133, 
+                xmax = as.numeric(set) - 0.4 + as.numeric(category)*0.133,
+                ymin = -0.2, ymax = 0.1, fill = factor(cat_num)), color = "white", linewidth = 0.2) +
+  
+  # Add numbers 1-6 in the blocks
+  geom_text(data = strat_data,
+            aes(x = as.numeric(set) - 0.4 + (as.numeric(category)-0.5)*0.133,
+                y = -0.05, label = cat_num), size = 2.2, fontface = "bold") +
+  
+  # Manual labels for Folds
+  annotate("text", x = 0.3, y = 1:5, label = paste("Fold", 1:5), 
+           hjust = 1, fontface = "bold", size = 3.5) +
+  
+  # Manual labels for Subsets
+  annotate("text", x = 1:5, y = -0.5, label = paste("Subset", 1:5), 
+           fontface = "bold", size = 3.5) +
+  
+  # Manual labels at left
+  # Align "Dementia Transition" with Fold 1 (y=1)
+  # annotate("text", x = -0.4, y = 1, label = "Dementia\nTransition", 
+  #          hjust = 1, fontface = "bold", size = 4, color = "black", lineheight = 0.9) +
+  
+  # Align "Data Subsets" with color blocks (y approx -0.05)
+  # annotate("text", x = -0.4, y = -0.05, label = "Data\nSubsets", 
+  #          hjust = 1, fontface = "bold", size = 4, color = "black", lineheight = 0.9) +
+  
+  # Right side ensemble arrow
+  annotate("segment", x = 5.6, y = 1, xend = 5.6, yend = 5, 
+           arrow = arrow(ends = "both", length = unit(0.2, "cm")), color = "grey40") +
+  annotate("text", x = 6.0, y = 3, label = "Average\nEnsemble", 
+           angle = 270, fontface = "bold", size = 4) +
+  
+  # Bottom Legend for categories
+  annotate("text", x = 0.5, y = -1.2, label = "Dementia Transition Category:",
+           hjust = 0, fontface = "bold", size = 3.5) +
+  annotate("text", x = 0.5, y = -1.6,
+           label = paste(glue("{cat_legend$num}: {cat_legend$label}"), collapse = "  |  "),
+           hjust = 0, size = 3.2, color = "grey20") +
+  
+  scale_fill_manual(values = c(cv_colors, set_names(strat_colors, 1:6))) +
+  scale_color_manual(values = cv_border) +
+  labs(title = "5-Fold Stratified Cross-Validation") +
+  coord_cartesian(clip = "off", xlim = c(-1.5, 6.2), ylim = c(-1.8, 5.5)) +
+  theme_void() +
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold", size = 16, margin = margin(b = 20)),
+    legend.position = "none"
+  )
+
+# Display and save
+print(p_cv)
+
+# Save to output
+fs::dir_create(here("VAE/lite/VAE_graph/output"))
+ggsave(here("VAE/lite/VAE_graph/output/vae_cv_pub.png"), p_cv, width = 10, height = 7, dpi = 300, bg = "white")
+write_rds(p_cv, here("VAE/lite/VAE_graph/output/vae_cv_pub.rds"))
+```

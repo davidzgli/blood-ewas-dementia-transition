@@ -1,0 +1,42 @@
+---
+title: "Patch VAE Supplementary Figures"
+subtitle: "Combining Architecture and CV Illustration"
+format: 
+  html:
+    embed-resources: true
+---
+
+```{r}
+#| label: setup
+#| include: false
+
+pacman::p_load(patchwork, ggplot2, here, fs, install = FALSE)
+```
+
+## Patch Panel a and Panel b
+
+```{r}
+#| label: patch-vae-fig
+#| fig-width: 12
+#| fig-height: 14
+
+# Panel a: Architecture (loading from RDS for best quality)
+panel_a <- read_rds(here("VAE/lite/VAE_graph/output/vae_architecture_pub.rds"))
+
+# Panel b: CV Illustration (loading from RDS for best quality)
+panel_b <- read_rds(here("VAE/lite/VAE_graph/output/vae_cv_pub.rds"))
+
+# Use patchwork to combine
+# Wrap panel_a to treat it as a single unit since it's already a patchwork object
+combined_fig <- wrap_elements(panel_a) / panel_b + 
+  plot_layout(heights = c(1, 1)) +
+  plot_annotation(tag_levels = 'a') & 
+  theme(plot.tag = element_text(face = "bold", size = 16))
+
+# Display and save
+print(combined_fig)
+
+fs::dir_create(here("VAE/lite/VAE_graph/output"))
+ggsave(here("VAE/lite/VAE_graph/output/fig_suppl_vae_methodology.png"), combined_fig, width = 12, height = 14, dpi = 300, bg = "white")
+ggsave(here("VAE/lite/VAE_graph/output/fig_suppl_vae_methodology.pdf"), combined_fig, width = 12, height = 14, bg = "white")
+```

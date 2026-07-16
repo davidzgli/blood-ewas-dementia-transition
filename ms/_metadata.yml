@@ -1,0 +1,62 @@
+# Document structure
+number-sections: false
+# bibliography: /ms/reference/dementia-EWAS.bib
+execute:
+  echo: false
+
+# Output formats
+# For docx, the path should be relative to the quarto file
+format:
+  html:
+    self-contained: true
+    smooth-scroll: true
+    link-external-icon: true
+    link-external-newwindow: true
+    code-fold: true
+    code-summary: "Show the code"
+    code-copy: true
+    code-overflow: scroll
+    code-tools: true
+    code-link: true
+    code-block-border-left: true
+  pdf:
+    keep-tex: false
+    fig-pos: H
+    colorlinks: true
+    lof: false
+    lot: false
+  docx:
+    colorlinks: true
+    bibliography: ../reference/dementia-EWAS.bib
+    csl: ../reference/nature.csl
+    reference-doc: ../reference/custom-reference-doc.docx
+  typst:
+    columns: 1
+    papersize: "us-letter"
+    bibliography: /ms/reference/dementia-EWAS.bib
+    bibliographystyle: /ms/reference/nature.csl
+    include-in-header:
+      - text: |
+          #set par.line(numbering: "1", numbering-scope: "page")
+
+crossref:
+  fig-prefix: "Fig. " 
+  custom:
+    - kind: float
+      key: suppfig
+      latex-env: suppfig
+      reference-prefix: "Supplementary Fig. "
+      space-before-numbering: true
+      latex-list-of-description: Supplementary Figure
+    - kind: float
+      key: supptbl
+      latex-env: supptbl
+      reference-prefix: "Supplementary Table"
+      space-before-numbering: true
+      latex-list-of-description: Supplementary Table
+    - kind: float
+      key: suppdata
+      latex-env: suppdata
+      reference-prefix: "Supplementary Data"
+      space-before-numbering: true
+      latex-list-of-description: Supplementary Data

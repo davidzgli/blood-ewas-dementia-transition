@@ -1,0 +1,61 @@
+---
+title: "Patch supplementary figure — APOE genotype boxplots"
+---
+
+## Overview
+
+Apply publication theming to the combined APOE genotype boxplot (threshold 7) and save as a high-resolution PNG for the supplementary figure.
+
+```{r}
+#| label: load-packages
+#| echo: false
+
+pacman::p_load(ggtext, install = FALSE)
+```
+
+```{r}
+#| label: setup-theme
+
+source(here("custom_func/theme_main_fig.R"))
+set_pub_geom_defaults()
+```
+
+## Load and patch figure
+
+```{r}
+#| label: patch-suppl-apoe-boxplot
+
+fig_suppl_apoe <- read_rds(
+  here("APOE/output/apoe_boxplot_thr7_combined.rds")
+)
+
+fig_suppl_apoe <- fig_suppl_apoe +
+  theme_main_fig() +
+  theme(
+    plot.title = element_blank(),
+    plot.subtitle = element_blank(),
+    axis.text.x = ggtext::element_markdown(angle = 30, hjust = 1, vjust = 1),
+    plot.margin = margin(t = 2, b = 2, l = 2, r = 2)
+  )
+fig_suppl_apoe <- rescale_layer_params(fig_suppl_apoe, linewidth_scale = 0.6)
+
+fs::dir_create(here("APOE/patch_figures/output"))
+ggsave(here("APOE/patch_figures/output/fig_suppl_apoe_boxplot.png"),
+       fig_suppl_apoe,
+       width = 6.5, height = 1.6, dpi = 600, bg = "white",
+       device = grDevices::png)
+```
+
+## Verify output
+
+```{r}
+#| label: verify-output
+
+output_files <- fs::dir_ls(
+  here("APOE/patch_figures/output"),
+  glob = "*suppl_apoe*"
+)
+fs::file_info(output_files) |>
+  select(path, size, modification_time) |>
+  mutate(path = basename(path))
+```

@@ -1,0 +1,301 @@
+---
+title: "Combined UMAP + VAE Permutation Visualization"
+subtitle: "Null distributions, p-value heatmap, and summary boxplot across methods and thresholds"
+---
+
+## Overview
+
+Combine permutation test results from UMAP and VAE lite analyses, computing empirical p-values and visualizing null distributions, p-value heatmaps, and summary boxplots across both methods and thresholds 7 and 8.
+
+## Load Packages
+
+```{r}
+#| label: load-packages
+#| echo: false
+
+pacman::p_load(patchwork, install = FALSE)
+conflicted::conflict_prefer_all("dplyr", quiet = TRUE)
+```
+
+## Load Data
+
+Load permutation and observed DPS from both methods and both thresholds, strip method-specific column prefixes to create generic dimension pair labels, and bind into combined tibbles.
+
+```{r}
+#| label: load-data
+
+methods <- list(
+  UMAP = list(
+    perm_template = \(th) here(glue("UMAP/lite/output/permutation_dps_threshold_{th}.rds")),
+    obs_template  = \(th) here(glue("UMAP/lite/output/dps_results_threshold_{th}.rds")),
+    col_prefix    = "umap_"
+  ),
+  VAE = list(
+    perm_template = \(th) here(glue("VAE/lite/permutation/output/permutation_dps_threshold_{th}.rds")),
+    obs_template  = \(th) here(glue("VAE/lite/DPS/output/dps_results_threshold_{th}.rds")),
+    col_prefix    = "vae_"
+  )
+)
+
+thresholds <- c(8, 7)
+
+# Load all data into a nested list: data[[method]][[threshold]]
+data_all <- map(names(methods), \(method) {
+  info <- methods[[method]]
+  map(thresholds, \(th) {
+    perm <- read_rds(info$perm_template(th)) |>
+      mutate(
+        method = method,
+        threshold = th,
+        method_threshold = glue("{method} Thr {th}"),
+        dim_pair_label = glue(
+          "dim_{str_remove(dimx, paste0('^', info$col_prefix))} vs dim_{str_remove(dimy, paste0('^', info$col_prefix))}"
+        )
+      )
+    obs <- read_rds(info$obs_template(th)) |>
+      mutate(
+        method = method,
+        threshold = th,
+        method_threshold = glue("{method} Thr {th}"),
+        dim_pair_label = glue(
+          "dim_{str_remove(dimx, paste0('^', info$col_prefix))} vs dim_{str_remove(dimy, paste0('^', info$col_prefix))}"
+        )
+      )
+    list(perm_dps = perm, obs_dps = obs)
+  }) |>
+    set_names(thresholds)
+}) |>
+  set_names(names(methods))
+
+# Bind into combined tibbles
+perm_all <- map(names(data_all), \(method) {
+  map(data_all[[method]], \(td) td$perm_dps) |> list_rbind()
+}) |> list_rbind()
+
+obs_all <- map(names(data_all), \(method) {
+  map(data_all[[method]], \(td) td$obs_dps) |> list_rbind()
+}) |> list_rbind()
+
+message(glue("Permutation rows: {nrow(perm_all)}, Observed rows: {nrow(obs_all)}"))
+```
+
+## Compute Empirical P-values
+
+p = (number of permutations with DPS >= observed) / N_permutations, computed per method-threshold-dimension pair.
+
+```{r}
+#| label: compute-pvalues
+
+pvalues_all <- map(names(data_all), \(method) {
+  map(names(data_all[[method]]), \(th_chr) {
+    td <- data_all[[method]][[th_chr]]
+
+    td$obs_dps |>
+      select(dimx, dimy, path2d_dps, method, threshold, method_threshold, dim_pair_label) |>
+      rename(observed = path2d_dps) |>
+      left_join(
+        td$perm_dps |> select(perm_id, dimx, dimy, path2d_dps),
+        by = c("dimx", "dimy"),
+        relationship = "many-to-many"
+      ) |>
+      summarise(
+        observed = first(observed),
+        n_perm_gte = sum(path2d_dps >= observed, na.rm = TRUE),
+        n_permutations = n(),
+        p_value = n_perm_gte / n_permutations,
+        perm_mean = mean(path2d_dps, na.rm = TRUE),
+        perm_sd = sd(path2d_dps, na.rm = TRUE),
+        method = first(method),
+        threshold = first(threshold),
+        method_threshold = first(method_threshold),
+        dim_pair_label = first(dim_pair_label),
+        .by = c(dimx, dimy)
+      )
+  }) |> list_rbind()
+}) |> list_rbind()
+
+message(glue("P-values computed: {nrow(pvalues_all)} rows ({length(unique(pvalues_all$method_threshold))} method-threshold combos x {nrow(pvalues_all) / length(unique(pvalues_all$method_threshold))} dim pairs)"))
+```
+
+## P-value Summary
+
+```{r}
+#| label: pvalue-summary
+
+pvalue_summary <- pvalues_all |>
+  summarise(
+    n_pairs = n(),
+    n_significant = sum(p_value < 0.05),
+    prop_significant = n_significant / n_pairs,
+    mean_pvalue = mean(p_value, na.rm = TRUE),
+    min_pvalue = min(p_value, na.rm = TRUE),
+    .by = method_threshold
+  ) |>
+  mutate(across(where(is.numeric) & !c(n_pairs, n_significant), \(x) round(x, 3)))
+
+pvalue_summary
+```
+
+## Plot 1: Aggregate Null Distribution Histograms
+
+Four-panel histogram showing the aggregate null distribution (mean DPS across dimension pairs per permutation) for each method-threshold combination, with observed mean as red dashed line.
+
+```{r}
+#| label: fig-null-distribution
+#| fig-width: 12
+#| fig-height: 8
+
+# Aggregate permuted DPS: mean across dim pairs per permutation
+perm_agg <- perm_all |>
+  summarise(
+    mean_dps = mean(path2d_dps, na.rm = TRUE),
+    .by = c(perm_id, method, threshold, method_threshold)
+  )
+
+# Aggregate observed DPS: mean across dim pairs
+obs_agg <- obs_all |>
+  summarise(
+    mean_dps = mean(path2d_dps, na.rm = TRUE),
+    .by = c(method, threshold, method_threshold)
+  )
+
+# Compute aggregate p-values for annotation
+agg_pvalues <- perm_agg |>
+  left_join(obs_agg, by = c("method", "threshold", "method_threshold"), suffix = c("_perm", "_obs")) |>
+  summarise(
+    p_value = sum(mean_dps_perm >= mean_dps_obs, na.rm = TRUE) / n(),
+    .by = c(method, threshold, method_threshold)
+  ) |>
+  mutate(label = glue("p = {sprintf('%.3f', p_value)}"))
+
+plot_null_hist <- ggplot(perm_agg, aes(x = mean_dps)) +
+  geom_histogram(bins = 30, fill = "gray70", color = "white", alpha = 0.8) +
+  geom_vline(
+    data = obs_agg,
+    aes(xintercept = mean_dps),
+    color = "red", linewidth = 1, linetype = "dashed"
+  ) +
+  geom_text(
+    data = agg_pvalues,
+    aes(label = label),
+    x = Inf, y = Inf, hjust = 1.1, vjust = 1.5,
+    size = 4, color = "red", fontface = "bold",
+    inherit.aes = FALSE
+  ) +
+  facet_wrap(~ method_threshold, ncol = 2, scales = "free_x") +
+  labs(
+    title = "Aggregate Null Distribution: Mean Path2D DPS Across Dim Pairs",
+    subtitle = "Red dashed line = observed mean; gray = permuted null",
+    x = "Mean Path2D DPS",
+    y = "Count"
+  ) +
+  theme_minimal() +
+  theme(
+    strip.text = element_text(size = 11, face = "bold"),
+    panel.grid.minor = element_blank()
+  )
+
+plot_null_hist
+```
+
+## Plot 2: P-value Heatmap
+
+Dimension pairs (rows) x method-threshold combinations (columns), with red fill for significant p-values.
+
+```{r}
+#| label: fig-pvalue-heatmap
+#| fig-width: 10
+#| fig-height: 8
+
+plot_pvalue_heatmap <- ggplot(
+  pvalues_all,
+  aes(x = method_threshold, y = dim_pair_label, fill = p_value)
+) +
+  geom_tile(color = "white", linewidth = 0.5) +
+  geom_text(
+    aes(
+      label = sprintf("%.3f", p_value),
+      color = p_value < 0.05
+    ),
+    size = 3.5, fontface = "bold", show.legend = FALSE
+  ) +
+  scale_color_manual(values = c("TRUE" = "white", "FALSE" = "black")) +
+  scale_fill_gradient2(
+    low = "#b2182b", mid = "#fddbc7", high = "white",
+    midpoint = 0.05, limits = c(0, 1),
+    name = "p-value"
+  ) +
+  labs(
+    title = "Empirical P-values: Observed vs Permuted Path2D DPS",
+    subtitle = "Red = significant (p < 0.05); white = non-significant",
+    x = "Method / Threshold",
+    y = "Dimension Pair"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(size = 11),
+    axis.text.y = element_text(size = 9),
+    panel.grid = element_blank()
+  )
+
+plot_pvalue_heatmap
+```
+
+## Plot 3: Summary Boxplot
+
+Permuted aggregate DPS distributions as boxplots with observed mean as red diamond, across all four method-threshold combinations.
+
+```{r}
+#| label: fig-summary-boxplot
+#| fig-width: 10
+#| fig-height: 6
+
+plot_summary_boxplot <- ggplot(
+  perm_agg,
+  aes(x = method_threshold, y = mean_dps)
+) +
+  geom_boxplot(fill = "gray80", alpha = 0.7, outlier.alpha = 0.5) +
+  geom_point(
+    data = obs_agg,
+    aes(x = method_threshold, y = mean_dps),
+    color = "red", size = 5, shape = 18
+  ) +
+  labs(
+    title = "Permuted Path2D DPS vs Observed",
+    subtitle = "Boxplots = permuted null (mean across dim pairs); red diamond = observed",
+    x = "Method / Threshold",
+    y = "Mean Path2D DPS Across Dim Pairs"
+  ) +
+  theme_minimal()
+
+plot_summary_boxplot
+```
+
+## Save Outputs
+
+Save all three plots as PNG and RDS, plus the combined p-values tibble.
+
+```{r}
+#| label: save-outputs
+
+output_dir <- here("VAE_UMAP_comb/output")
+fs::dir_create(output_dir)
+
+plots <- list(
+  fig_perm_null_hist = list(plot = plot_null_hist, w = 12, h = 8),
+  fig_perm_pvalue_heatmap = list(plot = plot_pvalue_heatmap, w = 10, h = 8),
+  fig_perm_summary_boxplot = list(plot = plot_summary_boxplot, w = 10, h = 6)
+)
+
+iwalk(plots, \(spec, nm) {
+  ggsave(
+    here(output_dir, glue("{nm}.png")),
+    spec$plot, width = spec$w, height = spec$h, dpi = 300,
+    bg = "white", device = ragg::agg_png
+  )
+  write_rds(spec$plot, here(output_dir, glue("{nm}.rds")))
+})
+
+write_rds(pvalues_all, here(output_dir, "pvalues_all.rds"))
+message("Saved all combined permutation visualization outputs")
+```

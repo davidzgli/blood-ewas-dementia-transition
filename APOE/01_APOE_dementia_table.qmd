@@ -1,0 +1,103 @@
+---
+title: "APOE and Dementia Association"
+---
+
+## Overview
+
+Examine APOE genotype distribution and its association with dementia trajectory.
+
+ApoE Genotypes and Dementia Risk:
+
+- e2/e2 (22): Generally protective against Alzheimer's disease.
+- e2/e3 (23): Slightly protective effect.
+- e2/e4 (24): Mixed effect; e2 is protective while e4 increases risk.
+- e3/e3 (33): Most common genotype; considered neutral for Alzheimer's risk.
+- e3/e4 (34): Moderately increased risk of Alzheimer's disease.
+- e4/e4 (44): Highest risk for Alzheimer's disease among these genotypes.
+
+```{r}
+#| label: load-packages
+#| echo: false
+
+pacman::p_load(gt, gtsummary, infer, install = FALSE)
+
+conflicted::conflict_prefer_all("dplyr", quiet = TRUE)
+```
+
+## Load data
+
+Load UMAP embeddings and join APOE genotype from the SAS genotype file.
+
+```{r}
+umap_embed <- read_rds(here("UMAP/lite/output/embedding_threshold_8.rds"))
+
+apoe_geno <-
+  haven::read_sas(here("data/private/apoe_genotype.sas7bdat")) |>
+  clean_names() |>
+  mutate(genoapoe = factor(genoapoe, levels = c("22", "23", "33", "24", "34", "44")))
+
+um <-
+  umap_embed |>
+  left_join(apoe_geno, by = c("subject_id" = "subr_id18"))
+
+glimpse(um)
+```
+
+## Count
+
+APOE genotype counts.
+
+```{r}
+um |>
+  count(genoapoe) |>
+  gt() |>
+  fmt_number(columns = n, decimals = 0)
+```
+
+## APOE and Dementia
+
+### Chi-square test
+
+```{r}
+chisq_result <-
+  um |>
+  infer::chisq_test(genoapoe ~ demcat, correct = TRUE)
+
+chisq_result
+```
+
+### Cross-tabulation table
+
+```{r}
+format_pvalue <- function(p) {
+  exponent <- floor(log10(p))
+  significand <- p / 10^exponent
+  sprintf("%.2f x 10<sup>%d</sup>", significand, exponent)
+}
+
+apoe_dem_table <-
+  um |>
+  filter(!is.na(genoapoe)) |>
+  tbl_cross(
+    genoapoe, demcat,
+    percent = "row",
+    label = list(genoapoe = "APOE genotype", demcat = "Dementia transition")
+  ) |>
+  bold_labels() |>
+  as_gt() |>
+  tab_source_note(
+    source_note = glue("Chi-square test: <i>P</i> = {format_pvalue(chisq_result$p_value)}") |> html()
+  )
+
+apoe_dem_table
+```
+
+### Save the table
+
+```{r}
+fs::dir_create(here("APOE/output"))
+
+apoe_dem_table |>
+  write_rds(file = here("APOE/output/apoe_dementia_cross_table.rds")) |>
+  gtsave(file = here("APOE/output/apoe_dementia_cross_table.png"), expand = 10, vwidth = 1600, vheight = 1200, zoom = 2)
+```

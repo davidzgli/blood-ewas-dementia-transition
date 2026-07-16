@@ -1,0 +1,327 @@
+---
+title: "Patch figure for validation"
+editor_options:
+  chunk_output_type: console
+---
+
+## Overview
+
+This document composes the main validation figure for the manuscript by combining effect-size scatter plots and sign-concordance analyses for the two reference cohorts, ADNI/AIBL and AddNeuroMed, into a single publication-ready figure.
+
+```{r}
+#| label: load-packages
+#| echo: false
+
+# Additional packages (tidyverse, here, janitor, glue loaded via .Rprofile)
+pacman::p_load(patchwork, ggtext, ragg, install = FALSE)
+knitr::opts_chunk$set(dev = "ragg_png")
+```
+
+```{r}
+#| label: load-theme
+#| echo: false
+
+source(here("custom_func/theme_main_fig.R"))
+set_pub_geom_defaults()
+```
+
+## Load Plot Objects
+
+Load pre-generated plot objects from individual validation analyses for composition.
+
+```{r}
+#| label: load-plots
+
+# Row 1: AGES vs ADNI/AIBL meta-analysis scatter
+fig_adni_aibl_scatter <- read_rds(
+  here("validation/output/fig_validation_ADNI_AIBL_scatter_three_transitions_p4.5_p4.0.rds")
+)
+
+# Row 2: AGES vs AddNeuroMed scatter
+fig_addneuromed_scatter <- read_rds(
+  here("validation/output/fig_validation_AddNeuroMed_scatter_two_key.rds")
+)
+
+# Row 3: Sign concordance for each reference cohort
+fig_directionality_adni_aibl <- read_rds(
+  here("validation/output/fig_directionality_ADNI_AIBL_only.rds")
+)
+
+fig_addneuromed_bar <- read_rds(
+  here("validation/output/fig_directionality_barplot_AddNeuroMed.rds")
+)
+```
+
+## Modify Plots for Composition
+
+Apply consistent styling and adjust annotations for the composite figure layout.
+
+```{r}
+#| label: helper-adjust-annotations
+
+# Helper function to adjust y position of p-value annotations in scatter plots
+# The original plots have r at y=I(0.95) and p at y=I(0.90), which overlap
+# This shifts the p-value annotation down for better spacing
+adjust_pval_annotation_y <- function(plot, new_y = 0.80) {
+  for (i in seq_along(plot$layers)) {
+    layer <- plot$layers[[i]]
+    # Check if this is a geom_text layer
+    if (inherits(layer$geom, "GeomText") && !is.null(layer$aes_params$y)) {
+      y_val <- layer$aes_params$y
+      # Handle I() wrapped values (AsIs class)
+      if (inherits(y_val, "AsIs")) {
+        y_val <- as.numeric(y_val)
+      }
+      # Check if y is around 0.90 (p-value position)
+      if (isTRUE(all.equal(y_val, 0.90, tolerance = 0.02))) {
+        plot$layers[[i]]$aes_params$y <- I(new_y)
+      }
+    }
+  }
+  plot
+}
+
+# Helper function to reduce font sizes in facet strip labels for main figure
+# The pval_cutoff is a factor - need to modify data in main plot AND all layers
+boost_text_annotation_size <- function(plot, factor = 1.4) {
+  for (i in seq_along(plot$layers)) {
+    geom <- plot$layers[[i]]$geom
+    if (inherits(geom, "GeomText") || inherits(geom, "GeomLabel")) {
+      ap <- plot$layers[[i]]$aes_params
+      if (!is.null(ap$size)) {
+        plot$layers[[i]]$aes_params$size <- ap$size * factor
+      }
+    }
+  }
+  plot
+}
+
+reduce_strip_font_sizes <- function(plot, main_size = "7pt", sub_size = "5pt",
+                                     old_main_size = "12pt", old_sub_size = "9pt") {
+  # Helper to modify a single data frame
+  modify_pval_cutoff <- function(df) {
+    if (is.null(df) || !is.data.frame(df)) return(df)
+    if (!"pval_cutoff" %in% names(df)) return(df)
+
+    new_values <- df$pval_cutoff |>
+      as.character() |>
+      str_replace(paste0("font-size:", old_sub_size), paste0("font-size:", sub_size))
+    df$pval_cutoff <- factor(new_values, levels = unique(new_values))
+    df
+  }
+
+  # Modify main plot data
+  plot$data <- modify_pval_cutoff(plot$data)
+
+  # Modify data in each layer (some layers have their own data frames)
+  for (i in seq_along(plot$layers)) {
+    layer_data <- plot$layers[[i]]$data
+    if (!is.null(layer_data) && is.data.frame(layer_data)) {
+      plot$layers[[i]]$data <- modify_pval_cutoff(layer_data)
+    }
+  }
+
+  plot
+}
+```
+
+```{r}
+#| label: helper-label-shortener
+
+# Helper function to shorten labels in plots
+shorten_labels <- function(text) {
+  text |>
+    str_replace("Correlation", "Corr") |>
+    str_replace("Association", "Asso") |>
+    str_replace("ADNI/AIBL Meta-analysis", "ADNI/AIBL Meta") |>
+    str_replace("CSF ", "") |>
+    str_replace("CSF", "")
+}
+
+# Helper to modify strip labels (facet titles)
+shorten_strip_labeller <- function(labels) {
+  lapply(labels, shorten_labels)
+}
+```
+
+```{r}
+#| label: modify-plots
+
+# Common theme modifications
+# For Nature Genetics: full page width ~180mm (~7 inches)
+# Font sizes: minimum 5pt, preferred 6-8pt for labels
+base_size <- 7
+
+# Helper to modify strip text in existing plots
+modify_strip_labels <- function(plot) {
+  # Modify the facet params labeller
+  plot$facet$params$labeller <- as_labeller(shorten_labels)
+  plot
+}
+
+# Panels a and b span the full text width, so their annotations can carry a larger
+# boost than the half-width panels of the previous six-panel layout.
+scatter_boost <- 1.7
+
+# Row 1 (a): AGES vs ADNI/AIBL meta-analysis scatter
+fig_a <- fig_adni_aibl_scatter |>
+  reduce_strip_font_sizes(sub_size = "5pt", old_sub_size = "6.5pt") |>
+  adjust_pval_annotation_y(new_y = 0.82) |>
+  modify_strip_labels()
+
+fig_a <- fig_a +
+  labs(
+    x = "Effect size of AGES cohort <br> <span style='font-size:5pt'>(N<sub>Subjects</sub> = 2,491)</span>",
+    y = "Effect size of ADNI/AIBL Meta <br> <span style='font-size:5pt'>(N<sub>Subjects</sub> = 797)</span>"
+  ) +
+  theme_main_fig(base_size = base_size) +
+  theme(
+    plot.title = element_blank(),
+    plot.subtitle = element_blank(),
+    axis.text.x = element_markdown(angle = 30, hjust = 1, size = base_size),
+    axis.title.y = element_markdown(size = base_size),
+    strip.text = element_markdown(size = base_size),
+    legend.position = "bottom",
+    legend.key.size = unit(0.25, "cm"),
+    legend.title = element_markdown(size = base_size * 0.9),
+    legend.text = element_markdown(size = base_size * 0.8)
+  )
+fig_a <- rescale_layer_params(fig_a, size_scale = 0.5, linewidth_scale = 0.5)
+fig_a <- boost_text_annotation_size(fig_a, factor = scatter_boost)
+
+# Row 2 (b): AGES vs AddNeuroMed scatter
+fig_b <- fig_addneuromed_scatter |>
+  adjust_pval_annotation_y(new_y = 0.82) |>
+  modify_strip_labels()
+
+fig_b <- fig_b +
+  labs(
+    x = "Effect size of AGES cohort <br> <span style='font-size:5pt'>(N<sub>Subjects</sub> = 2,491)</span>",
+    y = "Effect size of AddNeuroMed study <br> <span style='font-size:5pt'>(N<sub>Subjects</sub> = 284)</span>"
+  ) +
+  theme_main_fig(base_size = base_size) +
+  theme(
+    plot.title = element_blank(),
+    plot.subtitle = element_blank(),
+    axis.text.x = element_markdown(angle = 30, hjust = 1, size = base_size),
+    axis.title.y = element_markdown(size = base_size),
+    strip.text = element_markdown(size = base_size),
+    legend.position = "bottom",
+    legend.key.size = unit(0.25, "cm"),
+    legend.title = element_markdown(size = base_size * 0.9),
+    legend.text = element_markdown(size = base_size * 0.8)
+  )
+fig_b <- rescale_layer_params(fig_b, size_scale = 0.5, linewidth_scale = 0.5)
+fig_b <- boost_text_annotation_size(fig_b, factor = scatter_boost)
+
+# Row 3 left (c): ADNI/AIBL sign concordance. The single facet's lines rise toward the
+# relaxed thresholds on the right, so the legend sits in the empty upper left.
+fig_c <- fig_directionality_adni_aibl |>
+  modify_strip_labels()
+
+fig_c <- fig_c +
+  labs(
+    x = "-log10(Asso *P*-value) Threshold",
+    color = "AGES"
+  ) +
+  theme_main_fig(base_size = base_size) +
+  theme(
+    plot.title = element_blank(),
+    plot.subtitle = element_blank(),
+    axis.text.x = element_markdown(angle = 30, hjust = 1, size = base_size),
+    axis.title.x = element_markdown(size = base_size),
+    axis.title.y = element_markdown(size = base_size),
+    strip.text = element_markdown(size = base_size),
+    legend.position = c(0.26, 0.78),
+    legend.background = element_rect(fill = alpha("white", 0.95), color = NA),
+    legend.key.size = unit(0.25, "cm"),
+    legend.title = element_markdown(size = base_size * 0.9),
+    legend.text = element_markdown(size = base_size * 0.8),
+    legend.margin = margin(1, 1, 1, 1)
+  )
+fig_c <- rescale_layer_params(fig_c, size_scale = 0.5, linewidth_scale = 0.5)
+
+# Row 3 right (d): AddNeuroMed sign concordance barplot (keep legend inside plot)
+fig_d <- fig_addneuromed_bar +
+  labs(x = "AGES cohort") +
+  theme_main_fig(base_size = base_size) +
+  theme(
+    plot.title = element_blank(),
+    plot.subtitle = element_blank(),
+    axis.text.x = element_markdown(angle = 30, hjust = 1, size = base_size),
+    axis.title.x = element_markdown(size = base_size),
+    axis.title.y = element_markdown(size = base_size),
+    legend.position = c(0.22, 0.85),
+    legend.background = element_rect(fill = alpha("white", 0.95), color = NA),
+    legend.key.size = unit(0.25, "cm"),
+    legend.title = element_markdown(size = base_size * 0.9),
+    legend.text = element_markdown(size = base_size * 0.8),
+    legend.margin = margin(1, 1, 1, 1)
+  )
+fig_d <- rescale_layer_params(fig_d, size_scale = 0.5, linewidth_scale = 0.5)
+```
+
+## Compose Figure
+
+Arrange the four panels with patchwork: the two scatter grids each span the full text width, and the two sign-concordance panels share the bottom row. Panel letters follow the order the panels are added, not the layout string.
+
+```{r}
+#| label: compose-figure
+
+# Define layout: two full-width rows, then a half-and-half row
+layout <- "
+AAAA
+BBBB
+CCDD
+"
+
+fig_validation <- fig_a + fig_b + free(fig_c, side = "r") + fig_d +
+  plot_layout(
+    design = layout,
+    heights = c(2.6, 2.6, 2.2)
+  ) +
+  plot_annotation(
+    tag_levels = "a"
+  ) &
+  theme(
+    plot.tag = element_text(face = "bold", size = 12)
+  )
+```
+
+## Save Figure
+
+Export the composite figure as a high-resolution PNG for manuscript inclusion.
+
+```{r}
+#| label: save-figure
+
+fs::dir_create(here("validation/patch_figures/output"))
+
+agg_png(
+  here("validation/patch_figures/output/fig_validation.png"),
+  width = 6.5, height = 8, units = "in", res = 600
+)
+print(fig_validation)
+dev.off()
+```
+
+```{r}
+#| label: display-figure
+#| fig-width: 12
+#| fig-height: 12
+
+fig_validation
+```
+
+## Verify Output
+
+Confirm the output file was created successfully.
+
+```{r}
+#| label: verify-output
+
+file_info <- fs::file_info(here("validation/patch_figures/output/fig_validation.png"))
+cat("Output file:", here("validation/patch_figures/output/fig_validation.png"), "\n")
+cat("File size:", format(file_info$size, units = "MB"), "\n")
+cat("Created:", as.character(file_info$modification_time), "\n")
+```

@@ -1,0 +1,120 @@
+---
+title: "GO Enrichment Analysis Across Dementia Transitions"
+params:
+  top_n: 1000
+---
+
+## Load Packages
+
+```{r}
+#| label: load-packages
+#| message: false
+#| warning: false
+
+pacman::p_load(clusterProfiler, org.Hs.eg.db, install = FALSE)
+```
+
+
+## Set the top number of genes
+
+```{r}
+#| label: set-top-number
+#| message: false
+
+# top_n <- 2000
+```
+
+## Load Data
+
+### Background Genes
+
+```{r}
+#| label: load-data
+#| message: false
+
+# Load background genes
+background_genes <- read_rds(here("data/upon_request/background_great_genes.rds"))
+
+glimpse(background_genes)
+```
+
+### Significant genes
+
+The significant genes are the ones that are associated with the significant CpGs.
+
+
+```{r}
+sig_genes <- read_rds(here(glue("pathway_analysis/01_genes/output/top{params$top_n}_all_genes_df.rds")))
+
+glimpse(sig_genes)
+```
+
+
+## Get Entrez IDs for significant genes
+
+```{r}
+
+sig_genes_entrez <- sig_genes |> 
+  # select(genes) |> 
+  # distinct() |> 
+  mutate(entrez_id = AnnotationDbi::select(org.Hs.eg.db, keys = genes, keytype = "SYMBOL", columns = "ENTREZID")$ENTREZID)
+
+glimpse(sig_genes_entrez)
+```
+
+
+## Run GO Enrichment
+
+### Define the function
+
+```{r}
+  run_go_enrichment <- function(gene_tbl, target_condition, background_genes) {
+    # Perform GO analysis
+    enrichGO(
+      gene = gene_tbl %>% filter(condition == target_condition) %>% pull(entrez_id), 
+      universe = unique(background_genes$entrez_id), 
+      OrgDb = org.Hs.eg.db,
+      ont = "BP",
+      pAdjustMethod = "BH", 
+      pvalueCutoff = 0.05,
+      qvalueCutoff = 0.2,
+      readable = TRUE
+    )
+  }
+
+# Test the function
+
+run_go_enrichment(sig_genes_entrez, "mci2incid", background_genes)
+```
+
+
+### Run GO Enrichment for all conditions
+
+```{r}
+enrich_results <- unique(sig_genes_entrez$condition) |> 
+  set_names() |> 
+  # head(2) |> 
+  map(~run_go_enrichment(sig_genes_entrez, .x, background_genes))
+
+enrich_results
+```
+
+
+### Convert to tibble
+
+```{r}
+enrich_results_tibble <- map_dfr(enrich_results, ~as_tibble(.x@result), .id = "condition")
+
+glimpse(enrich_results_tibble)
+```
+
+
+
+## Save Results
+
+```{r}
+# Save results
+fs::dir_create(here("pathway_analysis/02_gene_ontology/output"))
+write_rds(enrich_results, here(glue("pathway_analysis/02_gene_ontology/output/top{params$top_n}_all_GO_enrichResult.rds")))
+write_rds(enrich_results_tibble, here(glue("pathway_analysis/02_gene_ontology/output/top{params$top_n}_all_GO_results.rds")))
+``` 

@@ -1,0 +1,176 @@
+---
+title: "Directionality Analysis"
+subtitle: "Combined Results Across Validation Studies"
+editor_options:
+  chunk_output_type: console
+---
+
+## Overview
+
+This analysis combines directionality (sign concordance) results from multiple validation cohorts to assess whether CpG sites show consistent effect directions between AGES and external studies. Uses binomial tests to evaluate significance of concordance.
+
+```{r}
+#| label: load-packages
+#| echo: false
+
+# Additional packages (tidyverse, here, glue loaded via .Rprofile)
+pacman::p_load(ggtext, ggh4x, scales, install = FALSE)
+
+conflicted::conflict_prefer_all("dplyr", quiet = TRUE)
+```
+
+## Load and Combine Directionality Data
+
+Load directionality results from individual validation analyses and combine into a single dataset.
+
+```{r}
+#| label: load-data
+
+combined_data <- bind_rows(
+  read_rds(here("validation/output/directionality_results_ADNI_AIBL.rds")) |>
+    mutate(dataset = "ADNI/AIBL Meta-analysis"),
+  read_rds(here("validation/output/directionality_results_CSF_pTau_CN.rds")) |>
+    mutate(dataset = "CSF pTau (CN)"),
+  read_rds(here("validation/output/directionality_results_CSF_total_Tau_CN.rds")) |>
+    mutate(dataset = "CSF Total Tau (CN)")
+)
+
+glimpse(combined_data)
+```
+
+## Prepare Data for Faceted Plot
+
+Filter to key dementia transitions and compute -log10 transformed P-values.
+
+```{r}
+#| label: prepare-data
+
+# Filter to three key transitions and create metrics
+three_transitions <- c("prev", "mci2incid", "normal2incid")
+
+plot_data <- combined_data |>
+  filter(demcat %in% three_transitions) |>
+  mutate(
+    demcat = fct_relevel(demcat, "normal2incid", "mci2incid", "prev"),
+    neg_log10_binom_pval = -log10(binom_pval),
+    dataset = factor(dataset, levels = c(
+      "ADNI/AIBL Meta-analysis",
+      "CSF Total Tau (CN)",
+      "CSF pTau (CN)"
+    ))
+  )
+
+glimpse(plot_data)
+```
+
+## Faceted Plot
+
+This plot shows how the directionality concordance (binomial test P-value) changes across association P-value thresholds. Each facet represents a validation dataset, with lines colored by dementia transition.
+
+The plot specification is defined once and reused for both the combined figure and the ADNI/AIBL-only figure, so the two cannot drift apart. `label_facet` names the facet that carries the *P* = 0.05 annotation.
+
+```{r}
+#| label: helper-build-plot
+
+build_directionality_plot <- function(df, label_facet) {
+  stopifnot(label_facet %in% levels(df$dataset))
+
+  p_label_data <- tibble(
+    dataset = factor(label_facet, levels = levels(df$dataset)),
+    cutoff_value = 4.5,
+    neg_log10_binom_pval = -log10(0.05)
+  )
+
+  ggplot(df, aes(x = cutoff_value, y = neg_log10_binom_pval, color = demcat)) +
+    geom_hline(yintercept = -log10(0.05), linetype = "dashed", color = "gray50") +
+    geom_text(data = p_label_data, aes(x = cutoff_value, y = neg_log10_binom_pval),
+              label = "italic(P) == 0.05", parse = TRUE, vjust = -0.5, hjust = 0,
+              size = 3, color = "gray30") +
+    geom_line(linewidth = 0.8) +
+    geom_point(size = 1.5) +
+    facet_wrap(~ dataset, nrow = 1) +
+    scale_x_reverse(breaks = c(4.5, 4, 3.5, 3, 2.5, 2)) +
+    scale_color_brewer(palette = "Dark2") +
+    labs(
+      x = "-log10(Association <i>P</i>-value) Threshold",
+      y = "-log10(Binomial Test <i>P</i>-value)",
+      color = "Dementia Transition"
+    ) +
+    theme(
+      legend.position = "bottom",
+      legend.title = element_text(face = "bold"),
+      axis.text.x = element_text(angle = 0, hjust = 0.5),
+      strip.text = element_markdown(size = 11, face = "bold"),
+      axis.title.x = element_markdown(),
+      axis.title.y = element_markdown(),
+      panel.spacing = unit(0.8, "lines")
+    )
+}
+```
+
+```{r}
+#| label: fig-directionality-combined
+#| fig-width: 10
+#| fig-height: 5
+
+p <- build_directionality_plot(plot_data, label_facet = "CSF pTau (CN)")
+
+print(p)
+```
+
+## ADNI/AIBL-Only Plot
+
+The manuscript's main validation figure shows sign concordance for the ADNI/AIBL meta-analysis alone. This is built here rather than by subsetting the composed plot object downstream, so that a change in the upstream dataset labels fails loudly instead of silently producing a smaller figure. The combined plot above is retained unchanged — the presentation deck reads it.
+
+```{r}
+#| label: fig-directionality-adni-aibl
+#| fig-width: 4
+#| fig-height: 5
+
+adni_dataset <- "ADNI/AIBL Meta-analysis"
+
+plot_data_adni <- plot_data |>
+  filter(dataset == adni_dataset) |>
+  mutate(dataset = fct_drop(dataset))
+
+stopifnot(
+  nrow(plot_data_adni) > 0,
+  setequal(levels(plot_data_adni$dataset), adni_dataset)
+)
+
+p_adni <- build_directionality_plot(plot_data_adni, label_facet = adni_dataset)
+
+print(p_adni)
+```
+
+## Export Figures
+
+Save the combined and ADNI/AIBL-only directionality figures as PNG and RDS files.
+
+```{r}
+#| label: save-figures
+
+ggsave(
+  here("validation/output/fig_directionality_combined.png"),
+  p,
+  width = 10,
+  height = 5,
+  dpi = 300,
+  bg = "white",
+  device = ragg::agg_png
+)
+write_rds(p, here("validation/output/fig_directionality_combined.rds"))
+
+ggsave(
+  here("validation/output/fig_directionality_ADNI_AIBL_only.png"),
+  p_adni,
+  width = 4,
+  height = 5,
+  dpi = 300,
+  bg = "white",
+  device = ragg::agg_png
+)
+write_rds(p_adni, here("validation/output/fig_directionality_ADNI_AIBL_only.rds"))
+
+message("Figures saved to validation/output/")
+```

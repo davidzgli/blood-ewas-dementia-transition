@@ -1,0 +1,839 @@
+---
+title: "Validation: AGES vs AddNeuroMed Study"
+params:
+  quartile_cutoff: 0.95
+---
+
+```{r}
+#| label: load-packages
+#| echo: false
+
+# Additional packages (tidyverse, here, janitor, glue loaded via .Rprofile)
+pacman::p_load(readxl, ggtext, rstatix, scales, viridis, RColorBrewer, install = FALSE)
+
+conflicted::conflict_prefer_all("dplyr", quiet = TRUE)
+
+# Create output directory
+fs::dir_create(here("validation/output"))
+```
+
+```{r}
+#| label: helper-functions
+#| echo: false
+
+source(here("custom_func/display_scientific_notation.R"))
+```
+
+## Introduction
+
+This analysis compares DNA methylation effect sizes from the AGES cohort (n=2,491) with the AddNeuroMed study (n=284: 89 CTL, 86 AD, 109 MCI).
+
+The AddNeuroMed study represents one of the first large-scale epigenome-wide association studies (EWAS) of Alzheimer's disease blood samples (Roubroeks et al., 2020, *Neurobiology of Aging*).
+
+**Analysis parameters:** Quartile cutoff = `r params$quartile_cutoff`
+
+## Load Data
+
+### AddNeuroMed study data
+
+```{r}
+#| label: load-addneuromed-data
+
+addneuromed <- read_excel(
+  here("data/published_data/AD_EWAS_HOBX6_NeurologyofAging2020/AppendixA_AddNeuroMed_CTL_MCI_AD.xlsx"),
+  sheet = "Supp Table 1 analysis",
+  skip = 3
+) |>
+  clean_names() |>
+  select(
+    probe_id,
+    difference_ct_lvs_mci,
+    difference_ct_lvs_ad,
+    difference_mc_ivs_ad
+  ) |>
+  rename(
+    difference_ctl_vs_mci = difference_ct_lvs_mci,
+    difference_ctl_vs_ad = difference_ct_lvs_ad,
+    difference_mci_vs_ad = difference_mc_ivs_ad
+  )
+
+glimpse(addneuromed)
+```
+
+### AGES cohort association data
+
+```{r}
+#| label: load-ages-data
+
+asso <- read_rds(here("data/upon_request/whole_genome_wide.rds")) |>
+  rename_with(~str_replace(., "nlog10_p_value_(.*)", "\\1_p"), contains("nlog10_p_value")) |>
+  rename_with(~str_replace(., "estimate_(.*)", "\\1_es"), contains("estimate"))
+
+glimpse(asso)
+```
+
+## Merge Datasets
+
+```{r}
+#| label: merge-data
+
+merged_data <- asso |>
+  inner_join(addneuromed, by = c("cg" = "probe_id")) |>
+  select(
+    cg,
+    # AGES trajectories
+    normal2mci_es,
+    stable_mci_es,
+    normal2incid_es,
+    mci2incid_es,
+    prev_es,
+    # AddNeuroMed comparisons
+    difference_ctl_vs_mci,
+    difference_ctl_vs_ad,
+    difference_mci_vs_ad
+  )
+
+message("Number of CpGs in merged dataset: ", nrow(merged_data))
+```
+
+## Prepare Effect Size Data
+
+```{r}
+#| label: prepare-effect-sizes
+
+# Pivot longer for AGES trajectories
+es_ages <- merged_data |>
+  pivot_longer(
+    cols = c(normal2mci_es, stable_mci_es, normal2incid_es, mci2incid_es, prev_es),
+    names_to = "ages_trajectory",
+    values_to = "ages_effect_size"
+  ) |>
+  mutate(
+    ages_trajectory = str_replace(ages_trajectory, "_es", ""),
+    ages_trajectory = factor(
+      ages_trajectory,
+      levels = c("normal2mci", "stable_mci", "normal2incid", "mci2incid", "prev")
+    )
+  )
+
+# Pivot longer for AddNeuroMed comparisons
+es_long <- es_ages |>
+  pivot_longer(
+    cols = c(difference_ctl_vs_mci, difference_ctl_vs_ad, difference_mci_vs_ad),
+    names_to = "addneuromed_comparison",
+    values_to = "addneuromed_effect_size"
+  ) |>
+  mutate(
+    addneuromed_comparison = case_when(
+      addneuromed_comparison == "difference_ctl_vs_mci" ~ "MCI vs CN",
+      addneuromed_comparison == "difference_ctl_vs_ad" ~ "AD vs CN",
+      addneuromed_comparison == "difference_mci_vs_ad" ~ "MCI vs AD",
+      TRUE ~ addneuromed_comparison
+    ),
+    addneuromed_comparison = factor(
+      addneuromed_comparison,
+      levels = c("MCI vs CN", "AD vs CN", "MCI vs AD")
+    )
+  )
+```
+
+### Apply Quartile Filtering
+
+```{r}
+#| label: apply-quartile-filtering
+
+# Apply quartile filtering per facet (addneuromed_comparison + ages_trajectory)
+if (params$quartile_cutoff < 1) {
+  lower_q <- (1 - params$quartile_cutoff) / 2
+  upper_q <- 1 - lower_q
+
+  es_long_filtered <- es_long |>
+    mutate(
+      x_lower = quantile(ages_effect_size, lower_q, na.rm = TRUE),
+      x_upper = quantile(ages_effect_size, upper_q, na.rm = TRUE),
+      y_lower = quantile(addneuromed_effect_size, lower_q, na.rm = TRUE),
+      y_upper = quantile(addneuromed_effect_size, upper_q, na.rm = TRUE),
+      .by = c(addneuromed_comparison, ages_trajectory)
+    ) |>
+    filter(
+      ages_effect_size >= x_lower & ages_effect_size <= x_upper,
+      addneuromed_effect_size >= y_lower & addneuromed_effect_size <= y_upper
+    ) |>
+    select(-x_lower, -x_upper, -y_lower, -y_upper)
+} else {
+  es_long_filtered <- es_long
+}
+
+message("CpGs after filtering: ", n_distinct(es_long_filtered$cg))
+```
+
+## Correlation Analysis
+
+```{r}
+#| label: correlation-analysis
+
+es_corr <- es_long_filtered |>
+  group_by(ages_trajectory, addneuromed_comparison) |>
+  rstatix::cor_test(
+    ages_effect_size,
+    addneuromed_effect_size,
+    method = "spearman"
+  ) |>
+  select(ages_trajectory, addneuromed_comparison, cor, p) |>
+  mutate(
+    cor_label = glue("r = {round(cor, 3)}; p = {format.pval(p, digits = 3)}")
+  )
+
+# Display correlation results
+es_corr |>
+  select(ages_trajectory, addneuromed_comparison, cor, p) |>
+  mutate(
+    cor = round(cor, 3),
+    p = format.pval(p, digits = 3)
+  ) |>
+  knitr::kable(caption = "Spearman correlations between AGES and AddNeuroMed effect sizes")
+```
+
+### Prepare Scatter Plot Correlation Labels
+
+```{r}
+#| label: prepare-scatter-labels
+
+# Create correlation labels with parsed expressions for scatter plots
+scatter_correlations <- es_long_filtered |>
+  summarise(
+    cor_test = list(cor.test(ages_effect_size, addneuromed_effect_size, method = "spearman", use = "complete.obs")),
+    n_cpgs = n_distinct(cg),
+    .by = c(addneuromed_comparison, ages_trajectory)
+  ) |>
+  mutate(
+    cor_estimate = map_dbl(cor_test, ~.$estimate),
+    cor_pval = map_dbl(cor_test, ~.$p.value),
+    # Parsed expression labels for italic r and P
+    cor_estimate_label = glue("italic(r) == ~{round(cor_estimate, 2)}"),
+    cor_pval_label = glue("italic(P) == ~{display_scientific_notation(cor_pval)}")
+  ) |>
+  select(-cor_test)
+```
+
+## Scatter Plot: All Comparisons
+
+```{r}
+#| label: fig-scatter-all
+#| fig-width: 12
+#| fig-height: 8
+
+scatter_all_plot <- es_long_filtered |>
+  ggplot(aes(x = ages_effect_size, y = addneuromed_effect_size)) +
+  geom_point(alpha = 0.3, size = 0.5) +
+  geom_smooth(method = "lm", formula = y ~ x, se = FALSE, color = "blue", linewidth = 0.8) +
+  # Correlation coefficient (r) with parsed expression
+  geom_label(
+    data = scatter_correlations,
+    aes(label = cor_estimate_label),
+    x = I(0.05),
+    y = I(0.95),
+    hjust = 0,
+    vjust = 0.5,
+    color = "darkred",
+    fill = "grey90",
+    label.size = NA,
+    size = 3,
+    parse = TRUE
+  ) +
+  # P-value with parsed expression
+  geom_label(
+    data = scatter_correlations,
+    aes(label = cor_pval_label),
+    x = I(0.05),
+    y = I(0.90),
+    hjust = 0,
+    vjust = 0.5,
+    color = "darkred",
+    fill = "grey90",
+    label.size = NA,
+    size = 3,
+    parse = TRUE
+  ) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray") +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "gray") +
+  facet_grid(
+    rows = vars(addneuromed_comparison),
+    cols = vars(ages_trajectory),
+    scales = "free"
+  ) +
+  labs(
+    x = glue("Effect size of AGES cohort <br> <span style = 'font-size:8pt'> (N<sub>Subjects</sub> = 2,491) </span>"),
+    y = "Effect size of AddNeuroMed study <br> <span style = 'font-size:8pt'> (N<sub>Subjects</sub> = 284) </span>",
+    title = "Whole-Genome EWAS Comparison: AGES vs AddNeuroMed",
+    subtitle = "Correlations across dementia categories and diagnostic comparisons"
+  ) +
+  theme(
+    axis.title.x = element_textbox(halign = 0.5),
+    axis.title.y = element_textbox(halign = 0.5, orientation = "left-rotated"),
+    strip.text.x = element_textbox_simple(halign = 0.5, lineheight = 1.2, margin = margin(8, 2, 2, 2)),
+    strip.text.y = element_textbox_simple(halign = 0.5, orientation = "right-rotated", lineheight = 1.2, margin = margin(2, 8, 2, 2)),
+    strip.placement = "outside",
+    plot.title = element_text(size = 14, face = "bold"),
+    plot.subtitle = element_text(size = 12)
+  )
+
+print(scatter_all_plot)
+```
+
+## Scatter Plot: Two Key Comparisons
+
+Filter to show only CTL vs MCI and CTL vs AD comparisons (omitting MCI vs AD).
+
+```{r}
+#| label: fig-scatter-two
+#| fig-width: 12
+#| fig-height: 6
+
+# Filter data for two key comparisons
+two_key_comparisons <- c("MCI vs CN", "AD vs CN")
+
+es_long_filtered_two <- es_long_filtered |>
+  filter(addneuromed_comparison %in% two_key_comparisons) |>
+  mutate(addneuromed_comparison = fct_drop(addneuromed_comparison))
+
+scatter_correlations_two <- scatter_correlations |>
+  filter(addneuromed_comparison %in% two_key_comparisons) |>
+  mutate(addneuromed_comparison = fct_drop(addneuromed_comparison))
+
+# Filter for key trajectories (3 trajectories)
+key_trajectories <- c("normal2incid", "mci2incid", "prev")
+
+es_long_filtered_key <- es_long_filtered |>
+  filter(ages_trajectory %in% key_trajectories) |>
+  mutate(ages_trajectory = fct_drop(ages_trajectory))
+
+scatter_correlations_key <- scatter_correlations |>
+  filter(ages_trajectory %in% key_trajectories) |>
+  mutate(ages_trajectory = fct_drop(ages_trajectory))
+
+# Filter for key trajectories + two key comparisons (3 trajectories x 2 comparisons)
+es_long_filtered_two_key <- es_long_filtered |>
+  filter(
+    ages_trajectory %in% key_trajectories,
+    addneuromed_comparison %in% two_key_comparisons
+  ) |>
+  mutate(
+    ages_trajectory = fct_drop(ages_trajectory),
+    addneuromed_comparison = fct_drop(addneuromed_comparison)
+  )
+
+scatter_correlations_two_key <- scatter_correlations |>
+  filter(
+    ages_trajectory %in% key_trajectories,
+    addneuromed_comparison %in% two_key_comparisons
+  ) |>
+  mutate(
+    ages_trajectory = fct_drop(ages_trajectory),
+    addneuromed_comparison = fct_drop(addneuromed_comparison)
+  )
+
+scatter_two_plot <- es_long_filtered_two |>
+  ggplot(aes(x = ages_effect_size, y = addneuromed_effect_size)) +
+  geom_point(alpha = 0.3, size = 0.5) +
+  geom_smooth(method = "lm", formula = y ~ x, se = FALSE, color = "blue", linewidth = 0.8) +
+  # Correlation coefficient (r) with parsed expression
+  geom_label(
+    data = scatter_correlations_two,
+    aes(label = cor_estimate_label),
+    x = I(0.05),
+    y = I(0.95),
+    hjust = 0,
+    vjust = 0.5,
+    color = "darkred",
+    fill = "grey90",
+    label.size = NA,
+    size = 3.5,
+    parse = TRUE
+  ) +
+  # P-value with parsed expression
+  geom_label(
+    data = scatter_correlations_two,
+    aes(label = cor_pval_label),
+    x = I(0.05),
+    y = I(0.80),
+    hjust = 0,
+    vjust = 0.5,
+    color = "darkred",
+    fill = "grey90",
+    label.size = NA,
+    size = 3.5,
+    parse = TRUE
+  ) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray") +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "gray") +
+  facet_grid(
+    rows = vars(addneuromed_comparison),
+    cols = vars(ages_trajectory),
+    scales = "free"
+  ) +
+  labs(
+    x = glue("Effect size of AGES cohort <br> <span style = 'font-size:8pt'> (N<sub>Subjects</sub> = 2,491) </span>"),
+    y = "Effect size of AddNeuroMed study <br> <span style = 'font-size:8pt'> (N<sub>Subjects</sub> = 284) </span>",
+    title = "EWAS Comparison: AGES vs AddNeuroMed (Two Key Comparisons)",
+    subtitle = "MCI vs CN and AD vs CN comparisons"
+  ) +
+  theme(
+    axis.title.x = element_textbox(halign = 0.5),
+    axis.title.y = element_textbox(halign = 0.5, orientation = "left-rotated"),
+    strip.text.x = element_textbox_simple(halign = 0.5, lineheight = 1.2, margin = margin(8, 2, 2, 2)),
+    strip.text.y = element_textbox_simple(halign = 0.5, orientation = "right-rotated", lineheight = 1.2, margin = margin(2, 8, 2, 2)),
+    strip.placement = "outside",
+    plot.title = element_text(size = 14, face = "bold"),
+    plot.subtitle = element_text(size = 12)
+  )
+
+print(scatter_two_plot)
+```
+
+## Scatter Plot: All Comparisons (Key Trajectories)
+
+Filter to show only 3 key AGES trajectories: Normal->Incident, MCI->Incident, and Prevalent.
+
+```{r}
+#| label: fig-scatter-all-key
+#| fig-width: 10
+#| fig-height: 8
+
+scatter_all_key_plot <- es_long_filtered_key |>
+  ggplot(aes(x = ages_effect_size, y = addneuromed_effect_size)) +
+  geom_point(alpha = 0.3, size = 0.5) +
+  geom_smooth(method = "lm", formula = y ~ x, se = FALSE, color = "blue", linewidth = 0.8) +
+  # Correlation coefficient (r) with parsed expression
+  geom_label(
+    data = scatter_correlations_key,
+    aes(label = cor_estimate_label),
+    x = I(0.05),
+    y = I(0.95),
+    hjust = 0,
+    vjust = 0.5,
+    color = "darkred",
+    fill = "grey90",
+    label.size = NA,
+    size = 3,
+    parse = TRUE
+  ) +
+  # P-value with parsed expression
+  geom_label(
+    data = scatter_correlations_key,
+    aes(label = cor_pval_label),
+    x = I(0.05),
+    y = I(0.90),
+    hjust = 0,
+    vjust = 0.5,
+    color = "darkred",
+    fill = "grey90",
+    label.size = NA,
+    size = 3,
+    parse = TRUE
+  ) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray") +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "gray") +
+  facet_grid(
+    rows = vars(addneuromed_comparison),
+    cols = vars(ages_trajectory),
+    scales = "free"
+  ) +
+  labs(
+    x = glue("Effect size of AGES cohort <br> <span style = 'font-size:8pt'> (N<sub>Subjects</sub> = 2,491) </span>"),
+    y = "Effect size of AddNeuroMed study <br> <span style = 'font-size:8pt'> (N<sub>Subjects</sub> = 284) </span>",
+    title = "EWAS Comparison: AGES vs AddNeuroMed (Key Trajectories)",
+    subtitle = "Normal->Incident, MCI->Incident, and Prevalent trajectories"
+  ) +
+  theme(
+    axis.title.x = element_textbox(halign = 0.5),
+    axis.title.y = element_textbox(halign = 0.5, orientation = "left-rotated"),
+    strip.text.x = element_textbox_simple(halign = 0.5, lineheight = 1.2, margin = margin(8, 2, 2, 2)),
+    strip.text.y = element_textbox_simple(halign = 0.5, orientation = "right-rotated", lineheight = 1.2, margin = margin(2, 8, 2, 2)),
+    strip.placement = "outside",
+    plot.title = element_text(size = 14, face = "bold"),
+    plot.subtitle = element_text(size = 12)
+  )
+
+print(scatter_all_key_plot)
+```
+
+## Scatter Plot: Two Key Comparisons (Key Trajectories)
+
+Filter to show 3 key AGES trajectories and 2 key AddNeuroMed comparisons.
+
+```{r}
+#| label: fig-scatter-two-key
+#| fig-width: 10
+#| fig-height: 6
+
+scatter_two_key_plot <- es_long_filtered_two_key |>
+  ggplot(aes(x = ages_effect_size, y = addneuromed_effect_size)) +
+  geom_point(alpha = 0.7, size = 0.4) +
+  geom_smooth(method = "lm", formula = y ~ x, se = FALSE, color = "blue", linewidth = 0.6) +
+  # Correlation coefficient (r) with parsed expression
+  geom_label(
+    data = scatter_correlations_two_key,
+    aes(label = cor_estimate_label),
+    x = I(0.05),
+    y = I(0.95),
+    hjust = 0,
+    vjust = 0.5,
+    color = "darkred",
+    fill = "grey90",
+    label.size = NA,
+    size = 2.2,
+    parse = TRUE
+  ) +
+  # P-value with parsed expression
+  geom_label(
+    data = scatter_correlations_two_key,
+    aes(label = cor_pval_label),
+    x = I(0.05),
+    y = I(0.80),
+    hjust = 0,
+    vjust = 0.5,
+    color = "darkred",
+    fill = "grey90",
+    label.size = NA,
+    size = 2.2,
+    parse = TRUE
+  ) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray") +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "gray") +
+  facet_grid(
+    rows = vars(addneuromed_comparison),
+    cols = vars(ages_trajectory),
+    scales = "free"
+  ) +
+  labs(
+    x = glue("Effect size of AGES cohort <br> <span style = 'font-size:8pt'> (N<sub>Subjects</sub> = 2,491) </span>"),
+    y = "Effect size of AddNeuroMed study <br> <span style = 'font-size:8pt'> (N<sub>Subjects</sub> = 284) </span>",
+    title = "EWAS Comparison: Key Trajectories & Two Key Comparisons",
+    subtitle = "MCI vs CN and AD vs CN comparisons with Normal->Incident, MCI->Incident, Prevalent"
+  ) +
+  theme(
+    axis.title.x = element_textbox(halign = 0.5),
+    axis.title.y = element_textbox(halign = 0.5, orientation = "left-rotated"),
+    strip.text.x = element_textbox_simple(halign = 0.5, lineheight = 1.2, margin = margin(8, 2, 2, 2)),
+    strip.text.y = element_textbox_simple(halign = 0.5, orientation = "right-rotated", lineheight = 1.2, margin = margin(2, 8, 2, 2)),
+    strip.placement = "outside",
+    plot.title = element_text(size = 14, face = "bold"),
+    plot.subtitle = element_text(size = 12)
+  )
+
+print(scatter_two_key_plot)
+```
+
+## Bar Plot: All Comparisons
+
+```{r}
+#| label: fig-barplot-all
+#| fig-width: 14
+#| fig-height: 10
+
+# Prepare data with significance categories
+barplot_data <- es_corr |>
+  mutate(
+    significance_level = case_when(
+      p < 0.001 ~ "p < 0.001",
+      p < 0.01 ~ "p < 0.01",
+      p < 0.05 ~ "p < 0.05",
+      TRUE ~ "p >= 0.05"
+    ),
+    significance_level = factor(
+      significance_level,
+      levels = c("p < 0.001", "p < 0.01", "p < 0.05", "p >= 0.05")
+    ),
+    # Create labels for the bars
+    cor_label_full = paste0(
+      round(cor, 3),
+      ifelse(p < 0.001, "***",
+             ifelse(p < 0.01, "**",
+                    ifelse(p < 0.05, "*", "")))
+    ),
+    # Enhanced trajectory labels
+    trajectory_label = case_when(
+      ages_trajectory == "normal2mci" ~ "Normal->MCI",
+      ages_trajectory == "stable_mci" ~ "Stable MCI",
+      ages_trajectory == "normal2incid" ~ "Normal->Incident",
+      ages_trajectory == "mci2incid" ~ "MCI->Incident",
+      ages_trajectory == "prev" ~ "Prevalent",
+      TRUE ~ as.character(ages_trajectory)
+    )
+  )
+
+# Create enhanced grouped bar plot
+barplot_all <- barplot_data |>
+  ggplot(aes(x = ages_trajectory, y = cor)) +
+  geom_col(
+    aes(fill = significance_level, alpha = abs(cor)),
+    color = "white", linewidth = 0.8, width = 0.7
+  ) +
+  geom_hline(yintercept = 0, linetype = "solid", color = "black", linewidth = 1) +
+  geom_hline(yintercept = c(-0.2, 0.2), linetype = "dotted", color = "gray60", alpha = 0.7) +
+  geom_hline(yintercept = c(-0.1, 0.1), linetype = "dotted", color = "gray80", alpha = 0.5) +
+  geom_text(
+    aes(
+      label = cor_label_full,
+      y = ifelse(cor >= 0, cor + 0.025, cor - 0.025),
+      color = significance_level
+    ),
+    size = 3.5,
+    fontface = "bold"
+  ) +
+  facet_wrap(
+    ~ addneuromed_comparison, ncol = 3,
+    labeller = labeller(addneuromed_comparison = c(
+      "MCI vs CN" = "MCI vs CN\n(n=109 vs n=89)",
+      "AD vs CN" = "AD vs CN\n(n=86 vs n=89)",
+      "MCI vs AD" = "MCI vs AD\n(n=109 vs n=86)"
+    ))
+  ) +
+  scale_fill_manual(
+    name = "Statistical\nSignificance",
+    values = c(
+      "p < 0.001" = "#440154",
+      "p < 0.01" = "#31688E",
+      "p < 0.05" = "#35B779",
+      "p >= 0.05" = "#FDE725"
+    ),
+    guide = guide_legend(override.aes = list(alpha = 1))
+  ) +
+  scale_color_manual(
+    name = "Statistical\nSignificance",
+    values = c(
+      "p < 0.001" = "white",
+      "p < 0.01" = "white",
+      "p < 0.05" = "black",
+      "p >= 0.05" = "black"
+    ),
+    guide = "none"
+  ) +
+  scale_alpha_continuous(range = c(0.6, 1), guide = "none") +
+  scale_y_continuous(
+    limits = c(-0.3, 0.4),
+    breaks = seq(-0.3, 0.4, 0.1),
+    labels = function(x) ifelse(x == 0, "0", sprintf("%.1f", x))
+  ) +
+  scale_x_discrete(labels = c(
+    "normal2mci" = "Normal->\nMCI",
+    "stable_mci" = "Stable\nMCI",
+    "normal2incid" = "Normal->\nIncident",
+    "mci2incid" = "MCI->\nIncident",
+    "prev" = "Prevalent"
+  )) +
+  labs(
+    title = "DNA Methylation Effect Size Correlations: AGES vs AddNeuroMed Cohorts",
+    subtitle = "Spearman correlations between dementia trajectories (AGES, n=2,491) and diagnostic comparisons (AddNeuroMed, n=284)\nBars show correlation strength with significance indicators (* p<0.05, ** p<0.01, *** p<0.001)",
+    x = "AGES Dementia Trajectories",
+    y = "Spearman Correlation Coefficient",
+    caption = "Bar transparency reflects correlation magnitude; text labels show exact values with significance stars"
+  ) +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold", margin = margin(b = 5)),
+    plot.subtitle = element_text(hjust = 0.5, size = 12, margin = margin(b = 15)),
+    plot.caption = element_text(hjust = 0.5, size = 10, color = "gray50"),
+    axis.text.x = element_text(angle = 0, hjust = 0.5, size = 10, face = "bold"),
+    axis.text.y = element_text(size = 10),
+    axis.title.x = element_text(size = 12, face = "bold", margin = margin(t = 10)),
+    axis.title.y = element_text(size = 12, face = "bold", margin = margin(r = 10)),
+    strip.text = element_text(face = "bold", size = 11, margin = margin(b = 10, t = 10)),
+    strip.background = element_rect(fill = "gray95", color = "gray80"),
+    legend.position = "bottom",
+    legend.title = element_text(size = 11, face = "bold"),
+    legend.text = element_text(size = 10),
+    panel.grid.minor = element_blank(),
+    panel.grid.major.x = element_blank(),
+    panel.grid.major.y = element_line(color = "gray90", linewidth = 0.5),
+    panel.border = element_rect(color = "gray80", fill = NA, linewidth = 0.5)
+  )
+
+print(barplot_all)
+```
+
+## Bar Plot: Two Key Comparisons
+
+```{r}
+#| label: fig-barplot-two
+#| fig-width: 10
+#| fig-height: 8
+
+# Filter barplot data for two key comparisons
+barplot_data_two <- barplot_data |>
+  filter(addneuromed_comparison %in% two_key_comparisons) |>
+  mutate(addneuromed_comparison = fct_drop(addneuromed_comparison))
+
+# Create bar plot for two key comparisons
+barplot_two <- barplot_data_two |>
+  ggplot(aes(x = ages_trajectory, y = cor)) +
+  geom_col(
+    aes(fill = significance_level, alpha = abs(cor)),
+    color = "white", linewidth = 0.8, width = 0.7
+  ) +
+  geom_hline(yintercept = 0, linetype = "solid", color = "black", linewidth = 1) +
+  geom_hline(yintercept = c(-0.2, 0.2), linetype = "dotted", color = "gray60", alpha = 0.7) +
+  geom_hline(yintercept = c(-0.1, 0.1), linetype = "dotted", color = "gray80", alpha = 0.5) +
+  facet_wrap(
+    ~ addneuromed_comparison, ncol = 2,
+    labeller = labeller(addneuromed_comparison = c(
+      "MCI vs CN" = "MCI vs CN\n(n=109 vs n=89)",
+      "AD vs CN" = "AD vs CN\n(n=86 vs n=89)"
+    ))
+  ) +
+  scale_fill_manual(
+    name = "Statistical\nSignificance",
+    values = c(
+      "p < 0.001" = "#440154",
+      "p < 0.01" = "#31688E",
+      "p < 0.05" = "#35B779",
+      "p >= 0.05" = "#FDE725"
+    ),
+    guide = guide_legend(override.aes = list(alpha = 1))
+  ) +
+  scale_color_manual(
+    name = "Statistical\nSignificance",
+    values = c(
+      "p < 0.001" = "white",
+      "p < 0.01" = "white",
+      "p < 0.05" = "black",
+      "p >= 0.05" = "black"
+    ),
+    guide = "none"
+  ) +
+  scale_alpha_continuous(range = c(0.6, 1), guide = "none") +
+  scale_y_continuous(
+    limits = c(-0.3, 0.4),
+    breaks = seq(-0.3, 0.4, 0.1),
+    labels = function(x) ifelse(x == 0, "0", sprintf("%.1f", x))
+  ) +
+  labs(
+    title = "DNA Methylation Effect Size Correlations: AGES vs AddNeuroMed (Two Key Comparisons)",
+    subtitle = "Spearman correlations: MCI vs CN and AD vs CN comparisons\nBars show correlation strength with significance indicators (* p<0.05, ** p<0.01, *** p<0.001)",
+    x = "AGES Dementia Trajectories",
+    y = "Spearman Correlation Coefficient"
+  ) +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 14, face = "bold", margin = margin(b = 5)),
+    plot.subtitle = element_text(hjust = 0.5, size = 11, margin = margin(b = 15)),
+    plot.caption = element_text(hjust = 0.5, size = 10, color = "gray50"),
+    axis.text.x = element_text(angle = 0, hjust = 0.5, size = 10, face = "bold"),
+    axis.text.y = element_text(size = 10),
+    axis.title.x = element_text(size = 12, face = "bold", margin = margin(t = 10)),
+    axis.title.y = element_text(size = 12, face = "bold", margin = margin(r = 10)),
+    strip.text = element_text(face = "bold", size = 11, margin = margin(b = 10, t = 10)),
+    strip.background = element_rect(fill = "gray95", color = "gray80"),
+    legend.position = "bottom",
+    legend.title = element_text(size = 11, face = "bold"),
+    legend.text = element_text(size = 10),
+    panel.grid.minor = element_blank(),
+    panel.grid.major.x = element_blank(),
+    panel.grid.major.y = element_line(color = "gray90", linewidth = 0.5),
+    panel.border = element_rect(color = "gray80", fill = NA, linewidth = 0.5)
+  )
+
+print(barplot_two)
+```
+
+## Export Figures
+
+```{r}
+#| label: save-figures
+
+# Save scatter plot - all comparisons (png and rds)
+ggsave(
+  here("validation/output/fig_validation_AddNeuroMed_scatter_all.png"),
+  scatter_all_plot,
+  width = 12,
+  height = 8,
+  dpi = 300,
+  bg = "white",
+  device = ragg::agg_png
+)
+write_rds(scatter_all_plot, here("validation/output/fig_validation_AddNeuroMed_scatter_all.rds"))
+
+# Save scatter plot - two key comparisons (png and rds)
+ggsave(
+  here("validation/output/fig_validation_AddNeuroMed_scatter_two.png"),
+  scatter_two_plot,
+  width = 12,
+  height = 6,
+  dpi = 300,
+  bg = "white",
+  device = ragg::agg_png
+)
+write_rds(scatter_two_plot, here("validation/output/fig_validation_AddNeuroMed_scatter_two.rds"))
+
+# Save scatter plot - all comparisons, key trajectories (png and rds)
+ggsave(
+  here("validation/output/fig_validation_AddNeuroMed_scatter_all_key.png"),
+  scatter_all_key_plot,
+  width = 10,
+  height = 8,
+  dpi = 300,
+  bg = "white",
+  device = ragg::agg_png
+)
+write_rds(scatter_all_key_plot, here("validation/output/fig_validation_AddNeuroMed_scatter_all_key.rds"))
+
+# Save scatter plot - two key comparisons, key trajectories (png and rds)
+ggsave(
+  here("validation/output/fig_validation_AddNeuroMed_scatter_two_key.png"),
+  scatter_two_key_plot,
+  width = 10,
+  height = 6,
+  dpi = 300,
+  bg = "white",
+  device = ragg::agg_png
+)
+write_rds(scatter_two_key_plot, here("validation/output/fig_validation_AddNeuroMed_scatter_two_key.rds"))
+
+# Save bar plot - all comparisons (png and rds)
+ggsave(
+  here("validation/output/fig_validation_AddNeuroMed_barplot.png"),
+  barplot_all,
+  width = 14,
+  height = 10,
+  dpi = 300,
+  bg = "white",
+  device = ragg::agg_png
+)
+write_rds(barplot_all, here("validation/output/fig_validation_AddNeuroMed_barplot.rds"))
+
+# Save bar plot - two key comparisons (png and rds)
+ggsave(
+  here("validation/output/fig_validation_AddNeuroMed_barplot_two.png"),
+  barplot_two,
+  width = 10,
+  height = 8,
+  dpi = 300,
+  bg = "white",
+  device = ragg::agg_png
+)
+write_rds(barplot_two, here("validation/output/fig_validation_AddNeuroMed_barplot_two.rds"))
+
+message("Figures saved to validation/output/")
+```
+
+## Save Data
+
+```{r}
+#| label: save-data
+
+write_rds(
+  es_corr,
+  here("validation/output/correlation_results_AddNeuroMed.rds")
+)
+
+write_rds(
+  merged_data,
+  here("validation/output/merged_data_AddNeuroMed.rds")
+)
+
+write_rds(
+  es_long_filtered,
+  here("validation/output/es_long_filtered_AddNeuroMed.rds")
+)
+
+message("Data saved to validation/output/")
+```

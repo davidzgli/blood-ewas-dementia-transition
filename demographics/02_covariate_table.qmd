@@ -1,0 +1,357 @@
+---
+title: "Covariate Table"
+---
+
+```{r}
+#| label: load-packages
+#| echo: false
+
+pacman::p_load(gtsummary, gt, install = FALSE)
+
+conflicted::conflict_prefer_all("dplyr", quiet = TRUE)
+```
+
+## Overview
+
+This document creates covariate tables summarizing demographic and blood cell composition characteristics stratified by dementia transition categories.
+
+## Introduction
+
+This notebook is to create a covariate table for the subjects used in the OLS association analysis.
+
+## Load data
+
+### Signifcant CpG sites
+
+Read the data of signifcant CG sites.
+
+```{r}
+#| label: load-data
+
+# glimpse(sig_cg[1:6])
+```
+
+
+### Meth data
+
+DNA meth tibble, one subject per row (n=2602, AGES1), covariates (n=20 besides subr_id18) and CpG (n > 800k) as columns. Keep only the significant CpG sites.
+
+```{r}
+#| label: Read DNAm data
+
+tic("Read DNAm data")
+m <- read_rds(here("data/collaborator_only/covariates_and_meth_DMP_on_chr21.rds")) |>
+  # Exclude subjects with missing smoking status (n=5)
+  filter(!is.na(a1smokingstatus))
+  # Keep relevant columns
+  # dplyr::select(subr_id18, a1age, sex, a1smokingstatus, dementia_ages1_eos, any_of(colnames(sig_cg)))
+  # dplyr::select(subr_id18, a1age, sex, a1smokingstatus, dementia_ages1_eos, any_of(sig_cg$cg))
+toc()
+
+glimpse(m)
+```
+
+### Blood cell composition
+
+```{r}
+#| label: Read blood cell composition
+
+comp <-
+  read_csv(here("data/collaborator_only/blood_cell_composition.csv")) |>
+  # Only keep AGES1, i.e., cohort = "I"
+  filter(cohort == "I") |>
+  # Select columns of blood cell composition, and subr_id18
+  select(subr_id18, Bcell:NK)
+
+glimpse(comp)
+```
+
+
+## Merge
+
+Merge the methylation data with blood cell composition.
+
+```{r}
+d_merged <- m |> 
+  left_join(comp, by="subr_id18") |> 
+  # Move cell composition after dementia_ages1_eos
+  relocate(Bcell:NK, .after = dementia_ages1_eos) |> 
+  # Convert subr_id18 to character
+  mutate(subr_id18 = as.character(subr_id18)) #|>
+  # Left join APOE data
+#   left_join(apo, by="subr_id18") |> 
+#   relocate(contains("apoe"), .after = dementia_ages1_eos)
+
+glimpse(d_merged[, 1:20])
+```
+
+
+## Clean the data
+
+```{r}
+#| label: clean-data
+#| eval: false
+
+d_clean <- d_merged |> 
+  # Remove variable labels
+  remove_labels() |>
+  # Rename variables
+  rename(
+    dementia_transition = dementia_ages1_eos,
+    smoking_status = a1smokingstatus,
+    age = a1age
+  )
+
+# labelled::var_label(d_clean)
+glimpse(d_clean)
+```
+
+
+```{r}
+
+d_clean <- d_merged |> 
+  # Rename variables
+  rename(
+    dementia_transition = dementia_ages1_eos,
+    smoking_status = a1smokingstatus,
+    age = a1age
+  ) |>
+  # Add variable labels
+  labelled::set_variable_labels(
+    dementia_transition = "Dementia transition",
+    age = "Age",
+    sex = "Sex",
+    smoking_status = "Smoking status",
+    Bcell = "B cell",
+    CD4T = "CD4T cell",
+    CD8T = "CD8T cell",
+    Eos = "Eos cell",
+    Mono = "Mono cell",
+    Neu = "Neu cell"
+  ) |> 
+  # Relabel factor levels
+  mutate(
+    sex = fct_recode(sex, "Male" = "M", "Female" = "F"),
+    smoking_status = fct_recode(smoking_status, "Non-smoker" = "no", "Former smoker" = "former", "Current smoker" = "curr")
+  )
+
+glimpse(d_clean)
+```
+
+
+## Examplar CpG site 1
+
+### Select the first CpG site
+```{r}
+#| label: select_cg1
+
+# Pin the exemplar CpG sites cited in the manuscript (Supplementary Table) so
+# the figure reproduces regardless of CpG column order in the input data.
+cg_site1 <- "cg12179179"
+
+cg_site1
+```
+
+### Run the model
+
+```{r}
+#| label: run_lm1
+
+model_1 <- glue( "{cg_site1} ~ dementia_transition + age + sex + smoking_status + Bcell + CD4T + CD8T + Eos + Mono + Neu + Mono") |> 
+  as.formula()  |> 
+  lm(data = d_clean) |> 
+  tbl_regression()
+
+model_1
+``` 
+
+
+### Save the model
+
+```{r}
+#| label: save-model1
+
+fs::dir_create(here("demographics/output"))
+model_1 |>
+  write_rds(file = here(glue("demographics/output/{cg_site1}_examplar_model.rds"))) |>
+  as_gt() |>
+  gtsave(file = here(glue("demographics/output/{cg_site1}_examplar_model.png")), expand = 10, vwidth = 1600, vheight = 1200, zoom = 2)
+
+```
+
+
+## Examplar CpG site 2
+
+### Select the second CpG site
+```{r}
+#| label: select_cg2
+
+cg_site2 <- "cg21358438"
+
+cg_site2
+```
+
+### Run the model
+
+```{r}
+#| label: run_lm2
+
+model_2 <- glue( "{cg_site2} ~ dementia_transition + age + sex + smoking_status + Bcell + CD4T + CD8T + Eos + Mono + Neu + Mono") |> 
+  as.formula()  |> 
+  lm(data = d_clean) |> 
+  tbl_regression()
+
+model_2
+``` 
+
+### Save the model
+
+```{r}
+#| label: save-model2
+
+model_2 |>
+  write_rds(file = here(glue("demographics/output/{cg_site2}_examplar_model.rds"))) |>
+  as_gt() |>
+  gtsave(file = here(glue("demographics/output/{cg_site2}_examplar_model.png")), expand = 10, vwidth = 1600, vheight = 1200, zoom = 2)
+```
+
+
+## Examplar CpG site 3
+
+### Select the third CpG site
+```{r}
+#| label: select_cg3
+
+cg_site3 <- "cg25080917"
+
+cg_site3
+```
+
+### Run the model
+
+```{r}
+#| label: run_lm3
+
+model_3 <- glue( "{cg_site3} ~ dementia_transition + age + sex + smoking_status + Bcell + CD4T + CD8T + Eos + Mono + Neu + Mono") |> 
+  as.formula()  |> 
+  lm(data = d_clean) |> 
+  tbl_regression()
+
+model_3
+``` 
+
+### Save the model
+
+```{r}
+#| label: save-model3
+
+model_3 |>
+  write_rds(file = here(glue("demographics/output/{cg_site3}_examplar_model.rds"))) |>
+  as_gt() |>
+  gtsave(file = here(glue("demographics/output/{cg_site3}_examplar_model.png")), expand = 10, vwidth = 1600, vheight = 1200, zoom = 2)
+```
+
+
+## Covariate table
+
+### Create the table
+
+```{r}
+#| label: covariate_table
+
+# With dementia_transition
+covariate_table_with_dementia <- d_clean |> 
+  select(dementia_transition, age, sex, smoking_status, Bcell, CD4T, CD8T, Eos, Mono, Neu, Mono) |> 
+  tbl_summary()
+
+covariate_table_with_dementia
+
+# Without dementia_transition
+covariate_table_without_dementia <- d_clean |> 
+  select(age, sex, smoking_status, Bcell, CD4T, CD8T, Eos, Mono, Neu, Mono) |> 
+  tbl_summary()
+
+covariate_table_without_dementia
+```
+
+### Save the table
+
+```{r}
+#| label: save-table
+
+# With dementia_transition
+covariate_table_with_dementia |> 
+  write_rds(file = here("demographics/output/covariate_table_with_dementia.rds")) |>
+  as_gt() |>
+  gtsave(file = here("demographics/output/covariate_table_with_dementia.png"), expand = 10, vwidth = 1600, vheight = 1200, zoom = 2)
+
+# Without dementia_transition
+covariate_table_without_dementia |>
+  write_rds(file = here("demographics/output/covariate_table_without_dementia.rds")) |>
+  as_gt() |>
+  gtsave(file = here("demographics/output/covariate_table_without_dementia.png"), expand = 10, vwidth = 1600, vheight = 1200, zoom = 2)
+```
+
+
+## Covariate table by dementia transition
+
+### Prepare data
+
+Ensure dementia_transition factor levels are in the correct order.
+
+```{r}
+#| label: prepare-data-by-transition
+
+d_by_transition <- d_clean |>
+  mutate(
+    dementia_transition = fct_relevel(
+      dementia_transition,
+      "stable_normal", "normal2mci", "stable_mci", "normal2incid", "mci2incid", "prev"
+    )
+  )
+```
+
+### Create the table
+
+```{r}
+#| label: covariate-table-by-transition
+
+covariate_table_by_transition <- d_by_transition |>
+  select(dementia_transition, age, sex, smoking_status, Bcell, CD4T, CD8T, Eos, Mono, Neu) |>
+  tbl_summary(
+    by = dementia_transition,
+    statistic = list(
+      all_continuous() ~ "{mean} ({sd})",
+      all_categorical() ~ "{n} ({p}%)"
+    ),
+    missing = "ifany",
+    missing_text = "Missing"
+  ) |>
+  add_p(
+    test = list(
+      all_continuous() ~ "kruskal.test",
+      all_categorical() ~ "chisq.test"
+    )
+  ) |>
+  add_overall(last = FALSE) |>
+  bold_labels()
+
+covariate_table_by_transition
+```
+
+### Save the table
+
+```{r}
+#| label: save-table-by-transition
+
+covariate_table_by_transition |>
+  write_rds(file = here("demographics/output/covariate_table_by_dementia_transition.rds")) |>
+  as_gt() |>
+  gtsave(
+    file = here("demographics/output/covariate_table_by_dementia_transition.png"),
+    expand = 10,
+    vwidth = 1400,
+    vheight = 1000,
+    zoom = 2
+  )
+```

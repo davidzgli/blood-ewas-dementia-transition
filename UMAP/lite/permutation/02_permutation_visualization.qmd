@@ -1,0 +1,311 @@
+---
+title: "Permutation Test: Visualization (Lite)"
+subtitle: "Null distribution and p-values for Path2D DPS, thresholds 7 & 8"
+---
+
+## Overview
+
+Compare observed Path2D DPS against the null distribution from label permutations, compute empirical p-values, and visualize results.
+
+## Setup
+
+```{r}
+#| label: load-packages
+#| echo: false
+
+pacman::p_load(patchwork, fs, install = FALSE)
+
+conflicted::conflict_prefer_all("dplyr", quiet = TRUE)
+```
+
+## Constants
+
+```{r}
+#| label: constants
+
+THRESHOLDS <- c(7, 8)
+```
+
+## Load Data
+
+```{r}
+#| label: load-data
+
+output_dir <- here("UMAP/lite/output")
+
+# Load permutation and observed DPS for both thresholds
+load_threshold <- function(t) {
+  list(
+    perm_dps = read_rds(here(output_dir, glue("permutation_dps_threshold_{t}.rds"))),
+    obs_dps = read_rds(here(output_dir, glue("dps_results_threshold_{t}.rds")))
+  )
+}
+
+threshold_data <- THRESHOLDS |>
+  set_names() |>
+  map(load_threshold)
+
+walk(THRESHOLDS, \(t) {
+  td <- threshold_data[[as.character(t)]]
+  message(glue("Threshold {t}: {nrow(td$perm_dps)} perm rows, {nrow(td$obs_dps)} observed rows"))
+})
+```
+
+## Compute Empirical P-values
+
+p = (# permutations with DPS >= observed) / N_permutations
+
+```{r}
+#| label: compute-pvalues
+
+pvalues <- imap_dfr(threshold_data, \(td, t_chr) {
+  t_num <- as.integer(t_chr)
+
+  td$obs_dps |>
+    select(dimx, dimy, path2d_dps) |>
+    rename(observed = path2d_dps) |>
+    left_join(
+      td$perm_dps |> select(perm_id, dimx, dimy, path2d_dps),
+      by = c("dimx", "dimy"),
+      relationship = "many-to-many"
+    ) |>
+    summarise(
+      observed = first(observed),
+      n_perm_gte = sum(path2d_dps >= observed, na.rm = TRUE),
+      n_permutations = n(),
+      p_value = n_perm_gte / n_permutations,
+      perm_mean = mean(path2d_dps, na.rm = TRUE),
+      perm_sd = sd(path2d_dps, na.rm = TRUE),
+      .by = c(dimx, dimy)
+    ) |>
+    mutate(
+      threshold = t_num,
+      dim_pair = glue("{dimx} vs {dimy}")
+    )
+})
+
+message(glue("P-values computed: {nrow(pvalues)} (dim pairs x thresholds)"))
+```
+
+## P-value Summary
+
+```{r}
+#| label: pvalue-summary
+
+pvalue_summary <- pvalues |>
+  summarise(
+    n_pairs = n(),
+    n_significant = sum(p_value < 0.05),
+    prop_significant = n_significant / n_pairs,
+    mean_pvalue = mean(p_value, na.rm = TRUE),
+    min_pvalue = min(p_value, na.rm = TRUE),
+    .by = threshold
+  ) |>
+  mutate(across(where(is.numeric) & !c(n_pairs, n_significant, threshold), \(x) round(x, 3)))
+
+pvalue_summary
+```
+
+## Null Distribution Histograms
+
+Faceted histograms per dimension pair with observed line and p-value.
+
+```{r}
+#| label: null-distribution-histograms
+#| output: false
+
+hist_plots <- THRESHOLDS |>
+  set_names() |>
+  map(\(t) {
+    td <- threshold_data[[as.character(t)]]
+    pval_data <- pvalues |>
+      filter(threshold == t) |>
+      mutate(label = glue("p = {sprintf('%.3f', p_value)}"))
+
+    obs_data <- td$obs_dps |>
+      mutate(dim_pair = glue("{dimx} vs {dimy}"))
+
+    perm_data <- td$perm_dps |>
+      mutate(dim_pair = glue("{dimx} vs {dimy}"))
+
+    ggplot(perm_data, aes(x = path2d_dps)) +
+      geom_histogram(bins = 20, fill = "gray70", color = "white", alpha = 0.8) +
+      geom_vline(
+        data = obs_data,
+        aes(xintercept = path2d_dps),
+        color = "red", linewidth = 1, linetype = "dashed"
+      ) +
+      geom_text(
+        data = pval_data,
+        aes(label = label),
+        x = Inf, y = Inf, hjust = 1.1, vjust = 1.5,
+        size = 3, color = "red", fontface = "bold",
+        inherit.aes = FALSE
+      ) +
+      facet_wrap(~dim_pair, scales = "free_x", ncol = 5) +
+      labs(
+        title = glue("Null Distribution: DPS (Threshold {t})"),
+        subtitle = "Red dashed line = observed; gray = permuted null",
+        x = "DPS",
+        y = "Count"
+      ) +
+      theme_minimal() +
+      theme(
+        strip.text = element_text(size = 9, face = "bold"),
+        panel.grid.minor = element_blank()
+      )
+  })
+```
+
+```{r}
+#| label: fig-null-distributions
+#| fig-width: 16
+#| fig-height: 10
+
+walk(hist_plots, print)
+```
+
+## P-value Heatmap
+
+Dimension pairs (rows) x thresholds (columns).
+
+```{r}
+#| label: fig-pvalue-heatmap
+#| fig-width: 8
+#| fig-height: 8
+
+plot_pvalue_heatmap <- ggplot(
+  pvalues,
+  aes(x = factor(threshold), y = dim_pair, fill = p_value)
+) +
+  geom_tile(color = "white", linewidth = 0.5) +
+  geom_text(
+    aes(
+      label = sprintf("%.3f", p_value),
+      color = p_value < 0.05
+    ),
+    size = 3.5, fontface = "bold", show.legend = FALSE
+  ) +
+  scale_color_manual(values = c("TRUE" = "white", "FALSE" = "black")) +
+  scale_fill_gradient2(
+    low = "#b2182b", mid = "#fddbc7", high = "white",
+    midpoint = 0.05, limits = c(0, 1),
+    name = "p-value"
+  ) +
+  labs(
+    title = "Empirical P-values: Observed vs Permuted Path2D DPS",
+    subtitle = "Red = significant (p < 0.05); white = non-significant",
+    x = "Threshold",
+    y = "Dimension Pair"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(size = 12),
+    axis.text.y = element_text(size = 9),
+    panel.grid = element_blank()
+  )
+
+plot_pvalue_heatmap
+```
+
+## Summary Boxplot
+
+Permuted vs observed aggregate DPS.
+
+```{r}
+#| label: fig-summary-boxplot
+#| fig-width: 10
+#| fig-height: 6
+
+# Aggregate permuted DPS across dim pairs per permutation
+perm_agg <- imap_dfr(threshold_data, \(td, t_chr) {
+  td$perm_dps |>
+    summarise(
+      path2d_dps = mean(path2d_dps, na.rm = TRUE),
+      .by = perm_id
+    ) |>
+    mutate(threshold = as.integer(t_chr), source = "Permuted")
+})
+
+# Aggregate observed DPS
+obs_agg <- imap_dfr(threshold_data, \(td, t_chr) {
+  tibble(
+    path2d_dps = mean(td$obs_dps$path2d_dps, na.rm = TRUE),
+    threshold = as.integer(t_chr),
+    source = "Observed"
+  )
+})
+
+plot_summary_boxplot <- ggplot(
+  perm_agg,
+  aes(x = factor(threshold), y = path2d_dps)
+) +
+  geom_boxplot(fill = "gray80", alpha = 0.7, outlier.alpha = 0.5) +
+  geom_point(
+    data = obs_agg,
+    aes(x = factor(threshold), y = path2d_dps),
+    color = "red", size = 5, shape = 18
+  ) +
+  labs(
+    title = "Permuted Path2D DPS vs Observed",
+    subtitle = "Boxplots = permuted null (mean across dim pairs); red diamond = observed",
+    x = "Threshold",
+    y = "Mean Path2D DPS Across Dim Pairs"
+  ) +
+  theme_minimal()
+
+plot_summary_boxplot
+```
+
+## Save Plots
+
+```{r}
+#| label: save-plots
+
+walk(THRESHOLDS, \(t) {
+  fig_dir <- here(glue("UMAP/lite/permutation/output/fig_tbl/threshold_{t}"))
+  fs::dir_create(fig_dir)
+
+  ggsave(
+    here(fig_dir, "fig_null_distribution_path2d.png"),
+    hist_plots[[as.character(t)]], width = 16, height = 10, dpi = 300,
+    bg = "white", device = ragg::agg_png
+  )
+  write_rds(hist_plots[[as.character(t)]], here(fig_dir, "fig_null_distribution_path2d.rds"))
+})
+
+# Save heatmap and summary boxplot (shared across thresholds)
+fig_dir_shared <- here("UMAP/lite/permutation/output/fig_tbl")
+fs::dir_create(fig_dir_shared)
+
+ggsave(
+  here(fig_dir_shared, "fig_pvalue_heatmap.png"),
+  plot_pvalue_heatmap, width = 8, height = 8, dpi = 300,
+  bg = "white", device = ragg::agg_png
+)
+write_rds(plot_pvalue_heatmap, here(fig_dir_shared, "fig_pvalue_heatmap.rds"))
+
+ggsave(
+  here(fig_dir_shared, "fig_permutation_summary_boxplot.png"),
+  plot_summary_boxplot, width = 10, height = 6, dpi = 300,
+  bg = "white", device = ragg::agg_png
+)
+write_rds(plot_summary_boxplot, here(fig_dir_shared, "fig_permutation_summary_boxplot.rds"))
+
+message("Saved all permutation visualization plots")
+```
+
+## Summary
+
+```{r}
+#| label: final-summary
+
+pvalues |>
+  summarise(
+    n_significant = sum(p_value < 0.05),
+    n_total = n(),
+    top_pair = dim_pair[which.min(p_value)],
+    min_p = min(p_value),
+    .by = threshold
+  )
+```

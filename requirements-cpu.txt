@@ -1,0 +1,15 @@
+# CPU-only variant of requirements.txt.
+#
+# This trains, but it WILL NOT reproduce the published latent coordinates: a
+# different backend yields the same trajectory structure on a different basis.
+# See "Determinism vs. reproduction" in README.md. Also much slower.
+#
+#   python3 -m venv ~/.venvs/dementia-vae-cpu
+#   ~/.venvs/dementia-vae-cpu/bin/pip install -r requirements-cpu.txt
+#   export VAE_VIRTUALENV=~/.venvs/dementia-vae-cpu
+
+tensorflow==2.20.0
+keras==3.11.3
+numpy==2.3.3
+scipy==1.16.2
+h5py==3.14.0

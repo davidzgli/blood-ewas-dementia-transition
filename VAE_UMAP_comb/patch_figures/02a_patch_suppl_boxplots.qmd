@@ -1,0 +1,308 @@
+---
+title: "Patch supplementary figures — boxplots and ANOVA heatmap"
+---
+
+## Overview
+
+Compose individual VAE and UMAP boxplots into multi-panel supplementary figures. Loads pre-generated ggplot2 RDS objects from the lite pipelines, applies consistent theming, and saves high-resolution PNGs.
+
+```{r}
+#| label: load-packages
+#| echo: false
+
+pacman::p_load(patchwork, ggtext, install = FALSE)
+```
+
+```{r}
+#| label: setup-theme
+
+source(here("custom_func/theme_main_fig.R"))
+set_pub_geom_defaults()
+```
+
+## Helper functions
+
+### Fix p-value labels
+
+Replace `%*%` (dot product) with `times` (multiplication sign) in plotmath labels stored in geom_text layer data.
+
+```{r}
+#| label: fix-pvalue-labels
+
+fix_pvalue_labels <- function(p) {
+  # %*% already renders correctly as x (multiplication sign) in plotmath.
+  # This function is kept as a pass-through in case future label fixes are needed.
+  p
+}
+```
+
+### Shift p-value text position
+
+Move p-value annotations leftward so they don't get clipped at publication width.
+
+```{r}
+#| label: shift-pvalue-text
+
+shift_pvalue_text <- function(p, x = 0.06) {
+  for (i in seq_along(p$layers)) {
+    ap <- p$layers[[i]]$aes_params
+    if (inherits(p$layers[[i]]$geom, "GeomText") &&
+        identical(ap$colour, "darkred")) {
+      p$layers[[i]]$aes_params$x <- I(x)
+    }
+  }
+  p
+}
+```
+
+### Rescale patchwork sub-plots
+
+Apply `rescale_layer_params()` to a patchwork object by iterating over all sub-plots.
+
+```{r}
+#| label: rescale-patchwork
+
+rescale_patchwork <- function(pw, ...) {
+  pw <- rescale_layer_params(pw, ...)
+  if (!is.null(pw$patches$plots)) {
+    for (i in seq_along(pw$patches$plots)) {
+      pw$patches$plots[[i]] <- rescale_layer_params(pw$patches$plots[[i]], ...)
+    }
+  }
+  pw
+}
+```
+
+### Compose boxplot panels
+
+```{r}
+#| label: patch-boxplot
+
+patch_boxplot <- function(p, remove_x_title = FALSE) {
+  p <- fix_pvalue_labels(p)
+  p <- p + theme_main_fig() +
+    theme(
+      plot.title = element_blank(),
+      plot.subtitle = element_blank(),
+      axis.text.x = ggtext::element_markdown(angle = 30, hjust = 1, vjust = 1),
+      plot.margin = margin(t = 2, b = 2, l = 2, r = 2)
+    )
+  p <- rescale_layer_params(p, size_scale = 0.6, linewidth_scale = 0.6)
+  p <- shift_pvalue_text(p)
+  if (remove_x_title) {
+    p <- p + theme(axis.title.x = element_blank())
+  }
+  p
+}
+```
+
+## Load boxplot data
+
+Load boxplot lists from the lite pipelines for both VAE and UMAP.
+
+```{r}
+#| label: load-boxplots
+
+vae_boxplot_7 <- read_rds(
+  here("VAE/lite/latent_coordinates/output/fig_tbl/boxplot_list_threshold_7.rds")
+)
+
+umap_boxplot_8 <- read_rds(
+  here("UMAP/lite/latent_coordinates/output/fig_tbl/boxplot_list_threshold_8.rds")
+)
+
+umap_boxplot_7 <- read_rds(
+  here("UMAP/lite/latent_coordinates/output/fig_tbl/boxplot_list_threshold_7.rds")
+)
+```
+
+## Supplementary figures: Boxplots
+
+### VAE boxplot threshold 7 (prev + stable_mci)
+
+```{r}
+#| label: suppl-fig-vae-boxplot-t7
+
+fs::dir_create(here("VAE_UMAP_comb/patch_figures/output"))
+fig_vae_boxplot_t7 <- wrap_plots(
+  patch_boxplot(vae_boxplot_7[["prev"]], remove_x_title = TRUE),
+  patch_boxplot(vae_boxplot_7[["stable_mci"]]),
+  ncol = 1
+) + plot_annotation(tag_levels = "a")
+
+ggsave(here("VAE_UMAP_comb/patch_figures/output/fig_suppl_vae_boxplot_threshold7.png"),
+       fig_vae_boxplot_t7,
+       width = 6.5, height = 5.2, dpi = 600, bg = "white",
+       device = grDevices::png)
+```
+
+### VAE one_dim_selected threshold 7
+
+Single faceted plot -- no patchwork tags needed. Keep only the dimensions reaching ANOVA significance
+(*P* < 0.01). Derive them from the plot's own p-value layer, never from a hardcoded dimension list --
+the `vae_N` indices are not stable across fits, and a hardcoded subset silently drops panels on a
+retrain instead of failing.
+
+```{r}
+#| label: suppl-fig-vae-boxplot-one-dim-t7
+
+p_base <- vae_boxplot_7[["one_dim_selected_1row"]]
+
+# The ANOVA p-values are baked into the geom_text layer; find it by class, not index.
+label_idx <- purrr::detect_index(p_base$layers, \(l) inherits(l$geom, "GeomText"))
+stopifnot(label_idx > 0)
+
+keep_dims <- p_base$layers[[label_idx]]$data |>
+  dplyr::filter(p < 0.01) |>
+  dplyr::pull(vae_dir) |>
+  as.character()
+
+# Fail loudly if a retrain rotates the latent basis, rather than silently changing the figure.
+stopifnot(
+  "Supp Fig 11 caption names VAE_1/VAE_2; the significant THR7 dimensions have changed" =
+    setequal(keep_dims, c("vae_1", "vae_2"))
+)
+
+p_base$data <- p_base$data |> dplyr::filter(vae_dir %in% keep_dims) |> droplevels()
+for (i in seq_along(p_base$layers)) {
+  ld <- p_base$layers[[i]]$data
+  if (!is.null(ld) && "vae_dir" %in% names(ld)) {
+    p_base$layers[[i]]$data <- ld |> dplyr::filter(vae_dir %in% keep_dims) |> droplevels()
+  }
+}
+
+fig_vae_boxplot_one_dim_t7 <- fix_pvalue_labels(p_base) +
+  theme_main_fig() +
+  theme(
+    plot.title = element_blank(),
+    plot.subtitle = element_blank(),
+    axis.text.x = ggtext::element_markdown(angle = 30, hjust = 1, vjust = 1),
+    plot.margin = margin(t = 2, b = 2, l = 2, r = 2)
+  )
+fig_vae_boxplot_one_dim_t7 <- rescale_layer_params(fig_vae_boxplot_one_dim_t7, size_scale = 0.6, linewidth_scale = 0.6)
+fig_vae_boxplot_one_dim_t7 <- shift_pvalue_text(fig_vae_boxplot_one_dim_t7)
+
+ggsave(here("VAE_UMAP_comb/patch_figures/output/fig_suppl_vae_boxplot_one_dim_threshold7.png"),
+       fig_vae_boxplot_one_dim_t7,
+       width = 4.2, height = 3.0, dpi = 600, bg = "white",
+       device = grDevices::png)
+```
+
+### UMAP boxplot threshold 8 (prev + stable_mci)
+
+```{r}
+#| label: suppl-fig-umap-boxplot-t8
+
+fig_umap_boxplot_t8 <- wrap_plots(
+  patch_boxplot(umap_boxplot_8[["prev"]], remove_x_title = TRUE),
+  patch_boxplot(umap_boxplot_8[["stable_mci"]]),
+  ncol = 1
+) + plot_annotation(tag_levels = "a")
+
+ggsave(here("VAE_UMAP_comb/patch_figures/output/fig_suppl_umap_boxplot_threshold8.png"),
+       fig_umap_boxplot_t8,
+       width = 6.5, height = 5.2, dpi = 600, bg = "white",
+       device = grDevices::png)
+```
+
+### UMAP boxplot threshold 7 (prev + stable_mci)
+
+```{r}
+#| label: suppl-fig-umap-boxplot-t7
+
+fig_umap_boxplot_t7 <- wrap_plots(
+  patch_boxplot(umap_boxplot_7[["prev"]], remove_x_title = TRUE),
+  patch_boxplot(umap_boxplot_7[["stable_mci"]]),
+  ncol = 1
+) + plot_annotation(tag_levels = "a")
+
+ggsave(here("VAE_UMAP_comb/patch_figures/output/fig_suppl_umap_boxplot_threshold7.png"),
+       fig_umap_boxplot_t7,
+       width = 6.5, height = 5.2, dpi = 600, bg = "white",
+       device = grDevices::png)
+```
+
+### UMAP one_dim_selected threshold 7
+
+```{r}
+#| label: suppl-fig-umap-boxplot-one-dim-t7
+
+fig_umap_boxplot_one_dim_t7 <- fix_pvalue_labels(umap_boxplot_7[["one_dim_selected_2row"]]) +
+  theme_main_fig() +
+  theme(
+    plot.title = element_blank(),
+    plot.subtitle = element_blank(),
+    axis.text.x = ggtext::element_markdown(angle = 30, hjust = 1, vjust = 1),
+    plot.margin = margin(t = 2, b = 2, l = 2, r = 2)
+  )
+fig_umap_boxplot_one_dim_t7 <- rescale_layer_params(fig_umap_boxplot_one_dim_t7, size_scale = 0.6, linewidth_scale = 0.6)
+fig_umap_boxplot_one_dim_t7 <- shift_pvalue_text(fig_umap_boxplot_one_dim_t7)
+
+ggsave(here("VAE_UMAP_comb/patch_figures/output/fig_suppl_umap_boxplot_one_dim_threshold7.png"),
+       fig_umap_boxplot_one_dim_t7,
+       width = 6.5, height = 3.9, dpi = 600, bg = "white",
+       device = grDevices::png)
+```
+
+## ANOVA heatmap (combined VAE and UMAP)
+
+```{r}
+#| label: suppl-fig-anova-heatmap
+
+fig_anova_heatmap <- read_rds(
+  here("VAE_UMAP_comb/output/fig_anova_heatmap.rds")
+)
+
+fig_anova_heatmap <- fig_anova_heatmap +
+  # theme_main_fig() +
+  theme(
+    plot.title = element_blank(),
+    plot.subtitle = element_blank()
+  )
+fig_anova_heatmap <- rescale_layer_params(fig_anova_heatmap, size_scale = 0.6, linewidth_scale = 0.6)
+
+ggsave(here("VAE_UMAP_comb/patch_figures/output/fig_suppl_anova_heatmap.png"),
+       fig_anova_heatmap,
+       width = 6.5, height = 5.2, dpi = 600, bg = "white",
+       device = grDevices::png)
+```
+
+## VAE methodology (architecture + CV illustration)
+
+Adapted from `VAE_graph/03_patch_vae_figures.qmd`. Combines the VAE architecture schematic (panel a) with the 5-fold CV illustration (panel b).
+
+```{r}
+#| label: suppl-fig-vae-methodology
+
+panel_a <- read_rds(here("VAE/lite/VAE_graph/output/vae_architecture_pub.rds"))
+panel_b <- read_rds(here("VAE/lite/VAE_graph/output/vae_cv_pub.rds"))
+
+panel_a <- rescale_patchwork(panel_a, size_scale = 0.55, linewidth_scale = 0.55)
+panel_b <- rescale_layer_params(panel_b, size_scale = 0.55, linewidth_scale = 0.55)
+panel_b <- panel_b +
+  theme(plot.title = element_text(size = 10, hjust = 0.5, face = "bold", margin = margin(b = 10)))
+
+fig_vae_methodology <- wrap_elements(panel_a) / panel_b +
+  plot_layout(heights = c(1, 1)) +
+  plot_annotation(tag_levels = "a") &
+  theme(plot.tag = element_text(face = "bold", size = 10))
+
+ggsave(here("VAE_UMAP_comb/patch_figures/output/fig_suppl_vae_methodology.png"),
+       fig_vae_methodology,
+       width = 6.5, height = 7.6, dpi = 600, bg = "white",
+       device = grDevices::png)
+```
+
+## Verify output
+
+```{r}
+#| label: verify-output
+
+output_files <- fs::dir_ls(
+  here("VAE_UMAP_comb/patch_figures/output"),
+  glob = "*suppl_vae_boxplot*|*suppl_umap_boxplot*|*suppl_anova*|*suppl_vae_methodology*"
+)
+fs::file_info(output_files) |>
+  select(path, size, modification_time) |>
+  mutate(path = basename(path))
+```

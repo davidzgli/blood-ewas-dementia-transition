@@ -1,0 +1,486 @@
+---
+title: "Extended DMP scatter"
+subtitle: "Beyond p value cutoffs"
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r}
+#| label: load-packages
+#| echo: false
+#| cache: false
+
+pacman::p_load(rstatix, ggtext, systemfonts, install = FALSE)
+
+```
+
+## Introduction
+
+Compute the correlation between effect sizes of different dementia categories at a series of p value cutoffs.
+
+## Load the data
+
+### Association data
+
+Read the whole genome association data.
+
+```{r}
+asso <-
+  # Use filtered dataset with only significant CG sites (nlog10_p_value >= 5)
+  read_rds(here("data/publicly_available/association_nlog10_p_value_lgeq5_wide.rds"))
+
+glimpse(asso)
+```
+
+## Function for selecting cg sites
+
+```{r}
+#| output: false
+
+source(here("custom_func/select_sig_cg.R"))
+
+# Test the function
+select_sig_cg(asso, 6) |> 
+  glimpse() 
+```
+
+
+## Function to display scientific notation
+
+```{r}
+#| output: false
+
+source(here("custom_func/display_scientific_notation.R"))
+
+# Test the function
+display_scientific_notation(1e-8)
+display_scientific_notation(0.3864971)
+display_scientific_notation(0)
+```
+
+## Collect data by p value cutoff
+
+Select effect size for p value cutoff 5:8, assemble the data into a long format tibble.
+
+```{r}
+
+effect_size_series <-  
+5:7 |>
+  set_names() |>
+  map(~ select_sig_cg(asso, .x)) |>
+  list_rbind(names_to = "pval_cutoff") |>
+  # Remove the nlog10_p_value columns
+  select(-starts_with("nlog10_p_value_")) |>
+  # Remove "estimate_" from the column names
+  rename_all( ~ str_remove(.x, "estimate_"))
+
+glimpse(effect_size_series)
+```
+
+
+## Scatter plot
+
+### Make a data preparation function
+
+This function will accept a data tibble, filter out the outliers, modify pval_cutoff,and calculate the correlation between two dementia categories.
+
+```{r}
+#| output: false
+
+# Create a function
+effect_size_for_scatter_plot <- function(.data, filter_condition, demcat1 = prev, demcat2 = normal2incid, font_size = "5pt") {
+  .data |>
+    # Filter out the outliers
+    filter({{filter_condition}}) |>
+    # Count the number of cg sites
+    add_count(pval_cutoff, name = "n_cg") |>
+    # Modify pval_cutoff
+    mutate(
+      pval_cutoff = glue(
+        "{pval_cutoff} <br><span style = 'font-size:{font_size}'>    (n={format(n_cg, big.mark = \",\")}) </span>"
+      )
+    ) |>
+    # Calculate the correlation between two dementia categories and create a label
+    mutate(
+      .by = pval_cutoff,
+      cor_estimate = cor.test({{demcat1}}, {{demcat2}}, method = "spearman")$estimate,
+      cor_pval = cor.test({{demcat1}}, {{demcat2}}, method = "spearman")$p.value  %>% display_scientific_notation(),    
+      cor_estimate_label = glue("italic(r) == ~{round(cor_estimate, 2)}"),
+      cor_pval_label = glue("italic(P) == ~{cor_pval}")
+    )
+}
+
+# Test the function
+effect_size_series |>
+  effect_size_for_scatter_plot(
+    filter_condition =
+      (pval_cutoff == "7" &
+         between(normal2incid, -0.2, 0.2)) |
+      (pval_cutoff == "6" &
+         between(normal2incid, -0.4, 0.2)) |
+      (
+        pval_cutoff == "5" &
+          between(normal2incid, -0.4, 0.3) & between(prev, -1.4, 0.3)
+      ),
+    # demcat1 = "prev",
+    demcat1 = prev,
+    # demcat2 = "normal2incid"
+    demcat2 = normal2incid,
+    font_size = "8pt"
+  ) |>
+  glimpse()
+```
+
+### Make a plotting function
+
+This function will accept a data tibble and plot a scatter plot of the effect size of two dementia categories.
+
+```{r}
+#| label:  make-plotting-function
+#| output: false
+
+# Create a function
+# make_effect_size_scatter_plot <- function(.data, ...) {
+make_effect_size_scatter_plot <- function(.data, demcat1 = "prev", demcat2 = "normal2incid", size = 2, ...) {
+  .data |>
+  rename(Threshold = pval_cutoff) |>
+  ggplot(aes(.data[[demcat1]], .data[[demcat2]])) +
+    geom_point(size = 0.3, color = "grey30") +
+    geom_smooth(formula = y ~ x, method = "lm", se=F, linewidth = 0.6) +
+    geom_text( aes(label = cor_estimate_label), x = I(0.05), y = I(0.95), hjust = 0, vjust = 0.5, color = "darkred", family = "Source Sans Pro", fontface = "plain", parse = TRUE, size = size)  +
+    geom_text( aes(label = cor_pval_label), x = I(0.05), y = I(0.87), hjust = 0, vjust = 0.5, color = "darkred", family = "Source Sans Pro", fontface = "plain", parse = TRUE, size = size) +
+    # Show a light gray dashed line at x = 0 and y = 0
+    geom_hline(yintercept = 0, linetype = "dashed", color = "gray") +
+    geom_vline(xintercept = 0, linetype = "dashed", color = "gray") +
+    facet_wrap(~ Threshold, scales = "free", labeller = label_both) +
+    labs(
+      x = glue("{dc}", dc = if (demcat1 == "prev") "Prevalent dementia" else glue("{demcat1} transition")),
+      y = glue("{dc}", dc = if (demcat2 == "prev") "Prevalent dementia" else glue("{demcat2} transition")),
+      ) +
+    theme(
+      strip.text = element_textbox_simple(halign=0.5, lineheight = 0.1, margin = margin(8, 2, 2, 2)),
+    )
+}
+
+# Test the function
+effect_size_series |>
+  effect_size_for_scatter_plot(
+    filter_condition =
+      (pval_cutoff == "7" &
+         between(normal2incid, -0.2, 0.2)) |
+      (pval_cutoff == "6" &
+         between(normal2incid, -0.4, 0.2)) |
+      (
+        pval_cutoff == "5" &
+          between(normal2incid, -0.4, 0.3) & between(prev, -1.4, 0.3)
+      ),
+    demcat1 = prev,
+    demcat2 = normal2incid,
+    font_size = "8pt"
+  ) |>
+  # make_effect_size_scatter_plot(mapping = aes(x = prev, y = normal2incid))
+  make_effect_size_scatter_plot(demcat1 = "prev", demcat2 = "normal2incid", size = 2)
+```
+
+### Initialize a list to store the scatter plots
+
+```{r}
+#| output: false
+
+# For main figures
+scatter_extended_DMP_main <- list()
+# For supplementary figures
+scatter_extended_DMP_suppl <- list()
+```
+
+### normal2incid vs prev
+
+Make a scatter plot of the effect size of normal2incid vs prev facetted by p value cutoff 5:7.
+
+```{r}
+#| label: fig-normal2incid-vs-prev
+#| figure.width: 10
+#| figure.height: 6
+
+# Create an expression for the filter condition
+ex_filter_condition <-
+  expr(
+  (pval_cutoff == "7" &
+    between(normal2incid, -0.2, 0.2)) |
+  (pval_cutoff == "6" &
+    between(normal2incid, -0.4, 0.2)) |
+  (
+    pval_cutoff == "5" &
+    between(normal2incid, -0.4, 0.3) & between(prev, -1.4, 0.3)
+  )
+  )
+
+# Make the plot for the main figure
+scatter_extended_DMP_main$normal2incid_vs_prev <-
+  effect_size_series |>
+    effect_size_for_scatter_plot(
+      filter_condition = !!ex_filter_condition,
+      demcat1 = prev,
+      demcat2 = normal2incid,
+      font_size = "4pt"
+    ) |>
+  make_effect_size_scatter_plot(demcat1 = "prev", demcat2 = "normal2incid", size = 3)
+
+# Make the plot for the supplementary figure
+scatter_extended_DMP_suppl$normal2incid_vs_prev <-
+  effect_size_series |>
+    effect_size_for_scatter_plot(
+      filter_condition = !!ex_filter_condition,
+      demcat1 = prev,
+      demcat2 = normal2incid,
+      font_size = "7pt"
+    ) |>
+  make_effect_size_scatter_plot(demcat1 = "prev", demcat2 = "normal2incid", size = 4)
+
+scatter_extended_DMP_suppl$normal2incid_vs_prev
+```
+
+### normal2mci vs prev
+
+Make a scatter plot of the effect size of normal2mci vs prev facetted by p value cutoff 5:7.
+
+```{r}
+#| label: fig-normal2mci-vs-prev
+#| figure.width: 10
+#| figure.height: 6
+
+# Create an expression for the filter condition
+ex_filter_condition <-
+  expr(
+    (pval_cutoff == "7" &
+      between(normal2mci, -0.2, 0.2)) |
+    (pval_cutoff == "6" &
+      between(normal2mci, -0.4, 0.2)) |
+      (
+        pval_cutoff == "5" &
+          between(normal2mci, -0.4, 0.3) & between(prev, -1.4, 0.3)
+      )
+  )
+
+# Make the plot for the main figure
+scatter_extended_DMP_main$normal2mci_vs_prev <-
+  effect_size_series |>
+    effect_size_for_scatter_plot(
+      filter_condition = !!ex_filter_condition,
+      demcat1 = prev,
+      demcat2 = normal2mci,
+      font_size = "4pt"
+    ) |>
+  make_effect_size_scatter_plot(demcat1 = "prev", demcat2 = "normal2mci", size = 3)
+
+# Make the plot for the supplementary figure
+scatter_extended_DMP_suppl$normal2mci_vs_prev <-
+    effect_size_series |>
+    effect_size_for_scatter_plot(
+      filter_condition = !!ex_filter_condition,
+      demcat1 = prev,
+      demcat2 = normal2mci,
+      font_size = "7pt"
+    ) |>
+  make_effect_size_scatter_plot(demcat1 = "prev", demcat2 = "normal2mci", size = 4)
+
+scatter_extended_DMP_suppl$normal2mci_vs_prev
+```
+
+### prev vs mci2incid
+
+Make a scatter plot of the effect size of prev vs mci2incid facetted by p value cutoff 5:7.
+
+```{r}
+#| label: fig-prev-vs-mci2incid
+#| figure.width: 10
+#| figure.height: 6
+
+# Create an expression for the filter condition
+ex_filter_condition <-
+  expr(
+    (pval_cutoff == "7" &
+      between(prev, -0.2, 0.2)) |
+    (pval_cutoff == "6" &
+      between(prev, -0.4, 0.2)) | 
+      (
+        pval_cutoff == "5" &
+          between(prev, -0.4, 0.3) & between(mci2incid, -1.4, 0.3)
+      )
+  ) 
+
+# Make the plot for the main figure
+scatter_extended_DMP_main$prev_vs_mci2incid <-
+  effect_size_series |>
+  effect_size_for_scatter_plot(
+    filter_condition = !!ex_filter_condition,
+    demcat1 = mci2incid,
+    demcat2 = prev,
+    font_size = "5pt"
+  ) |>
+  make_effect_size_scatter_plot(demcat1 = "mci2incid", demcat2 = "prev", size = 2)
+
+# Make the plot for the supplementary figure
+scatter_extended_DMP_suppl$prev_vs_mci2incid <-
+  effect_size_series |>
+  effect_size_for_scatter_plot(
+    filter_condition = !!ex_filter_condition,
+    demcat1 = mci2incid,
+    demcat2 = prev,
+    font_size = "7pt"
+  ) |>
+  make_effect_size_scatter_plot(demcat1 = "mci2incid", demcat2 = "prev", size = 4)
+
+scatter_extended_DMP_suppl$prev_vs_mci2incid
+```
+
+### normal2mci vs mci2incid
+
+Make a scatter plot of the effect size of normal2mci vs mci2incid facetted by p value cutoff 5:7.
+
+```{r}
+#| label: fig-normal2mci-vs-mci2incid
+#| figure.width: 10
+#| figure.height: 6
+
+# Create an expression for the filter condition
+ex_filter_condition <-
+  expr(
+    (pval_cutoff == "7" &
+      between(normal2mci, -0.2, 0.2)) |
+      (pval_cutoff == "6" &
+        between(normal2mci, -0.4, 0.2)) |
+      (
+        pval_cutoff == "5" &
+          between(normal2mci, -0.4, 0.3) & between(mci2incid, -1.4, 0.3)
+      )
+  )
+
+# Make the plot for the main figure
+scatter_extended_DMP_main$normal2mci_vs_mci2incid <-
+  effect_size_series |>
+    effect_size_for_scatter_plot(
+      filter_condition = !!ex_filter_condition,
+      demcat1 = mci2incid,
+      demcat2 = normal2mci,
+      font_size = "5pt"
+    ) |>
+  make_effect_size_scatter_plot(demcat1 = "mci2incid", demcat2 = "normal2mci", size = 2)
+
+# Make the plot for the supplementary figure
+scatter_extended_DMP_suppl$normal2mci_vs_mci2incid <-
+  effect_size_series |>
+    effect_size_for_scatter_plot(
+      filter_condition = !!ex_filter_condition,
+      demcat1 = mci2incid,
+      demcat2 = normal2mci,
+      font_size = "7pt"
+    ) |>
+  make_effect_size_scatter_plot(demcat1 = "mci2incid", demcat2 = "normal2mci", size = 4)
+
+scatter_extended_DMP_suppl$normal2mci_vs_mci2incid
+```
+
+### mci2incid vs normal2incid
+
+Make a scatter plot of the effect size of mci2incid vs normal2incid facetted by p value cutoff 5:7.
+
+```{r}
+#| label: fig-mci2incid-vs-normal2incid
+#| figure.width: 10
+#| figure.height: 6
+
+# Create an expression for the filter condition
+ex_filter_condition <-
+  expr(
+    (pval_cutoff == "7" &
+      between(mci2incid, -0.2, 0.2)) |
+      (pval_cutoff == "6" &
+        between(mci2incid, -0.4, 0.2)) & between(normal2incid, -0.4, 0.3)|
+      (
+        pval_cutoff == "5" &
+          between(mci2incid, -0.4, 0.3) & between(normal2incid, -0.4, 0.3)
+      )
+  )
+
+# Make the plot for the main figure
+scatter_extended_DMP_main$mci2incid_vs_normal2incid <-
+  effect_size_series |>
+    effect_size_for_scatter_plot(
+      filter_condition = !!ex_filter_condition,
+      demcat1 = normal2incid,
+      demcat2 = mci2incid,
+      font_size = "5pt"
+    ) |>
+  make_effect_size_scatter_plot(demcat1 = "normal2incid", demcat2 = "mci2incid", size = 2)
+
+# Make the plot for the supplementary figure
+scatter_extended_DMP_suppl$mci2incid_vs_normal2incid <-
+  effect_size_series |>
+    effect_size_for_scatter_plot(
+      filter_condition = !!ex_filter_condition,
+      demcat1 = normal2incid,
+      demcat2 = mci2incid,
+      font_size = "7pt"
+    ) |>
+  make_effect_size_scatter_plot(demcat1 = "normal2incid", demcat2 = "mci2incid", size = 4)
+
+scatter_extended_DMP_suppl$mci2incid_vs_normal2incid
+```
+
+### normal2mci vs normal2incid
+
+Make a scatter plot of the effect size of normal2mci vs normal2incid facetted by p value cutoff 5:7.
+
+```{r}
+#| label: fig-normal2mci-vs-normal2incid
+#| figure.width: 10
+#| figure.height: 6
+
+# Create an expression for the filter condition
+ex_filter_condition <-
+  expr(
+    (pval_cutoff == "7" &
+      between(normal2mci, -0.2, 0.2)) |
+      (pval_cutoff == "6" &
+        between(normal2mci, -0.4, 0.2)) & between(normal2incid, -0.4, 0.3)|
+      (
+        pval_cutoff == "5" &
+          between(normal2mci, -0.4, 0.3) & between(normal2incid, -0.4, 0.3)
+      )
+  )
+
+# Make the plot for the main figure
+scatter_extended_DMP_main$normal2mci_vs_normal2incid <-
+  effect_size_series |>
+  effect_size_for_scatter_plot(
+    filter_condition = !!ex_filter_condition,
+    demcat1 = normal2incid,
+    demcat2 = normal2mci,
+    font_size = "5pt"
+  ) |>
+  make_effect_size_scatter_plot(demcat1 = "normal2incid", demcat2 = "normal2mci", size = 2)
+
+# Make the plot for the supplementary figure
+scatter_extended_DMP_suppl$normal2mci_vs_normal2incid <-
+  effect_size_series |>
+  effect_size_for_scatter_plot(
+    filter_condition = !!ex_filter_condition,
+    demcat1 = normal2incid,
+    demcat2 = normal2mci,
+    font_size = "7pt"
+  ) |>
+  make_effect_size_scatter_plot(demcat1 = "normal2incid", demcat2 = "normal2mci", size = 4)
+
+scatter_extended_DMP_suppl$normal2mci_vs_normal2incid   
+```
+
+## Save the scatter plots
+
+```{r}
+#| output: false
+
+fs::dir_create(here("normal2mci_focused/output"))
+write_rds(scatter_extended_DMP_main, here("normal2mci_focused/output/scatter_extended_DMP_main.rds"))
+write_rds(scatter_extended_DMP_suppl, here("normal2mci_focused/output/scatter_extended_DMP_suppl.rds"))
+```

@@ -1,0 +1,50 @@
+---
+title: "Main figures for the manuscript"
+format:
+  typst:
+    include-in-header:
+      - text: |
+          #set par.line(numbering: "1", numbering-scope: "page")
+---
+
+## Overview
+
+This document compiles main figures for the dementia EWAS manuscript.
+
+{{< pagebreak >}}
+
+![](/normal2mci_focused/patch_figures/output/fig_normal2mci.png){#fig-normal2mci width="100%"}
+
+**[@fig-normal2mci]** | **normal2mci exhibits inverse correlations with other transitions.** **a.** Scatter plots demonstrating correlation analyses between prevalent dementia effect sizes and the effect sizes of three transitions: normal2incid, mci2incid, and normal2mci.  **b.** Correlation analyses between mci2incid transition and three transitions: prevalent dementia, normal2incid, and normal2mci. Each dot in **a** and **b** represents a differentially methylated position (DMP) meeting the significance threshold of $P < 1.0 \times 10^{-8}$. **c.** Effect size correlations between prevalent dementia and normal2incid transition across three significance thresholds ($P < 1.0 \times 10^{-7}$, $10^{-6}$, and $10^{-5}$), demonstrating consistent positive correlations. The number of CpG sites at each threshold is indicated. **d.** Effect size correlations between prevalent dementia and normal2mci transition across identical significance thresholds, revealing consistent negative correlations. **e.** Spearman correlation coefficients plotted against increasingly stringent p-value thresholds (from $10^0$ to $10^{-10}$), comparing normal2incid (red), mci2incid (green), and stable_mci (blue) against prevalent dementia and normal2mci transitions. **f.** Similar correlation analysis comparing prevalent dementia (red), mci2incid (green), and stable_mci (blue) against normal2incid and normal2mci transitions. Blue regression lines in panels **a**-**d** indicate the linear relationship between variables. Spearman correlation coefficients (r) and their corresponding p-values are shown in red text for each comparison. In panels **a**–**d**, a few CpG sites were removed as outliers. *P* = 0 denotes *P*-values that exceed double-precision floating-point limits (approximately < 5 × 10^−324^).
+
+{{< pagebreak >}}
+
+![](/VAE_UMAP_comb/patch_figures/output/fig_vae_boxplots.png){#fig-vae-boxplots width="100%"}
+
+**[@fig-vae-boxplots]** | **Latent dimensions discriminate dementia stages.** **a,** Boxplots comparing all six VAE latent dimensions between cognitively stable subjects and those with prevalent dementia at the EWAS significance threshold of *P* < 1.0 × 10⁻⁸ (403 CpGs), with t-test *P*-values (red) at the top. **b,** Parallel analysis comparing cognitively stable subjects with those exhibiting stable mild cognitive impairment (MCI). **c,** Distribution of VAE latent values across the dementia progression continuum in the three dimensions (VAE_6, VAE_2, VAE_4) that changed near-monotonically along the cognitive decline ordering: normal2mci, stable_normal, stable_mci, normal2incid, mci2incid, and prev_dementia. **d,** Four UMAP dimensions with the strongest ANOVA significance showing parallel gradual changes across the same progression ordering at THR8. *P*-values (red) were derived from t-tests in panels **a** and **b**, and from ANOVA in panels **c** and **d**.
+
+{{< pagebreak >}}
+
+![](/VAE_UMAP_comb/patch_figures/output/fig_scatter_peak.png){#fig-scatter-peak width="100%"}
+
+**[@fig-scatter-peak]** | **Latent dimension pairs reveal continuous dementia progression trajectory.** **a–d,** Two-dimensional kernel density contour plots illustrating subject distribution across pairs of latent dimensions at EWAS threshold *P* < 1.0 × 10⁻⁸ (403 CpGs): VAE_5 versus VAE_6 (rank 1, **a**), VAE_2 versus VAE_5 (rank 2, **b**), UMAP_1 versus UMAP_5 (rank 1, **c**), and UMAP_1 versus UMAP_2 (rank 2, **d**). Blue contours represent cognitively stable subjects, while orange contours represent subjects with dementia, with individual subjects depicted as points. Each panel displays five facets corresponding to the transition groups: normal2mci, stable_mci, normal2incid, mci2incid, and prev_dementia. Dimension pairs are ranked by dementia progression score (DPS). **e–h,** Density-weighted contour center trajectory plots for the corresponding dimension pairs from panels **a–d**, with DPS values of 0.442 (**e**), 0.415 (**f**), 0.911 (**g**), and 0.834 (**h**). The star denotes the contour center of stable normal subjects (blue); colored points mark the contour centers for normal2mci (orange), stable_mci (green), normal2incid (red), mci2incid (purple), and prev_dementia (brown). Arrows connect sequential centroids along the expected cognitive decline ordering, delineating the epigenetic progression path from normal2mci through stable_mci, normal2incid, and mci2incid to prev_dementia.
+
+{{< pagebreak >}}
+
+![](/APOE/patch_figures/output/fig_main_apoe_boxplot.png){#fig-apoe-boxplots width="100%"}
+
+**[@fig-apoe-boxplots]** | **APOE genotype effects on methylation-derived latent dimensions at THR8 (403 CpGs).** Boxplots showing the distribution of the six latent dimensions that differed significantly by APOE functional role (Kruskal-Wallis *P* < 0.05) across six APOE genotypes (ε2/ε2, ε2/ε3, ε3/ε3, ε2/ε4, ε3/ε4, ε4/ε4) in 2,487 subjects, arranged in a 2 × 3 grid. Genotypes are grouped by functional role: Protective (ε2/ε2, ε2/ε3), Neutral (ε3/ε3), and Detrimental (ε2/ε4, ε3/ε4, ε4/ε4), indicated by color-coded background bars. Kruskal-Wallis test *P*-values, computed across the three functional role groups, are shown in red at the top of each panel; orange annotations indicate median values for each genotype.
+
+{{< pagebreak >}}
+
+![](/validation/patch_figures/output/fig_validation.png){#fig-validation width="100%"}
+
+**[@fig-validation]** | **External validation of AGES dementia-associated methylation signatures.** Effect sizes from the AGES cohort were compared with those from independent cohorts across three dementia phenotypes: normal2incid, mci2incid, and prevalent dementia (prev). **a,** Spearman correlation of effect sizes between AGES and a meta-analysis of the Alzheimer's Disease Neuroimaging Initiative (ADNI) and Australian Imaging, Biomarkers, and Lifestyle (AIBL) cohorts. CpG sites were selected at two significance thresholds (*P* < 10^−4.5^ and *P* < 10^−4^) based on the ADNI/AIBL meta-analysis, with the number of overlapping sites indicated for each comparison and the number of subjects indicated for each cohort. **b,** Correlation of effect sizes between AGES and the AddNeuroMed cohort for comparisons of controls versus MCI (top row) and controls versus AD (bottom row). The analysis used the 1,000 most significant CpG sites reported in the published AddNeuroMed study, which were identified by ANOVA comparing control, MCI, and AD groups. **c,** Sign concordance analysis showing the proportion of CpG sites with consistent effect size directions between AGES and the ADNI/AIBL meta-analysis, across progressively relaxed association *P*-value thresholds. Colors indicate AGES phenotypes: normal2incid (green), mci2incid (orange), and prev (purple). The dashed horizontal line indicates *P* = 0.05 for the binomial test. **d,** Sign concordance analysis for the AddNeuroMed cohort, comparing AD versus controls (green) and MCI versus controls (orange) across AGES phenotypes. In **a** and **b**, blue lines indicate linear regression fits, and Spearman correlation coefficients (*r*) with corresponding *P*-values are displayed in red. *P* = 0 denotes *P*-values that exceed double-precision floating-point limits (approximately < 5 × 10^−324^). To prevent outliers from distorting scatter plot displays, panels **a** and **b** show the central 95% of data points after symmetric quantile filtering (2.5% trimmed from each tail on both axes, applied independently per facet); correlation statistics were computed on this filtered subset.
+
+{{< pagebreak >}}
+
+![](/pathway_analysis/05_patch_fig_and_make_table/output/fig_pathway_analysis.png){#fig-pathway-analysis width="100%"}
+
+**[@fig-pathway-analysis]** | **Functional pathway analysis across dementia transitions.** **a.** UpSet plot showing the intersection of genes associated with the top 1,000 CpG sites across different dementia transitions. The left bars show the total number of genes for each transition, while the vertical bars show the size of gene intersections, with connected dots below indicating which transitions contribute to each intersection. **b.** UpSet plot depicting the overlap of significantly enriched Gene Ontology (GO) terms across transitions. Similar to panel a, the left bars indicate total GO terms per transition, and vertical bars show the size of term intersections. **c.** Distribution of biological function categories among significantly enriched GO terms for each dementia transition. Similar GO terms are grouped into functional categories. Bar heights represent the percentage of GO terms in each dementia transition for a functional category, with numbers above bars indicating the count of GO terms in that category.
+
+{{< pagebreak >}}

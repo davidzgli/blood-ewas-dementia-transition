@@ -1,0 +1,177 @@
+---
+title: "Combined UMAP + VAE DPS Visualization"
+subtitle: "Side-by-side comparison of Path2D DPS across methods and thresholds"
+---
+
+## Overview
+
+This document combines DPS results from UMAP and VAE lite analyses, producing heatmaps, line plots, and bar charts that compare both methods across thresholds 7 and 8.
+
+## Load Packages
+
+```{r}
+#| label: load-packages
+#| echo: false
+
+pacman::p_load(patchwork, install = FALSE)
+conflicted::conflict_prefer_all("dplyr", quiet = TRUE)
+```
+
+## Load Data
+
+Load DPS results from both methods and both thresholds, add method labels, create generic dimension pair labels by stripping method prefix, and bind into a single tibble.
+
+```{r}
+#| label: load-data
+
+methods <- list(
+  UMAP = list(
+    path_template = \(th) here(glue("UMAP/lite/output/dps_results_threshold_{th}.rds")),
+    col_prefix = "umap_"
+  ),
+  VAE = list(
+    path_template = \(th) here(glue("VAE/lite/DPS/output/dps_results_threshold_{th}.rds")),
+    col_prefix = "vae_"
+  )
+)
+
+thresholds <- c(8, 7)
+
+dps_all <- map(names(methods), \(method) {
+  info <- methods[[method]]
+  map(thresholds, \(th) {
+    read_rds(info$path_template(th)) |>
+      mutate(
+        method = method,
+        threshold = th,
+        method_threshold = glue("{method} Thr {th}"),
+        dim_pair_label = glue(
+          "dim_{str_remove(dimx, paste0('^', info$col_prefix))} vs dim_{str_remove(dimy, paste0('^', info$col_prefix))}"
+        )
+      )
+  }) |>
+    list_rbind()
+}) |>
+  list_rbind()
+
+glimpse(dps_all)
+```
+
+## Plot 1: DPS Heatmap
+
+DPS values ranked by performance across all four method-threshold combinations, with tile labels showing the dimension pair and DPS value.
+
+```{r}
+#| label: fig-dps-heatmap
+#| fig-width: 14
+#| fig-height: 5
+
+plot_heatmap <- dps_all |>
+  mutate(
+    tile_label = paste0(dim_pair_label, "\n", sprintf("%.2f", path2d_dps))
+  ) |>
+  ggplot(aes(x = dps_rank, y = method_threshold, fill = path2d_dps)) +
+  geom_tile(color = "white", linewidth = 1) +
+  geom_text(aes(label = tile_label), size = 2.5, fontface = "bold") +
+  scale_fill_gradient2(
+    low = "#2166ac", mid = "white", high = "#b2182b",
+    midpoint = 0, limits = c(-1, 1), name = "Path2D DPS"
+  ) +
+  scale_x_continuous(breaks = 1:15, expand = c(0, 0)) +
+  scale_y_discrete(expand = c(0, 0)) +
+  labs(
+    x = "Dimension Pair Rank (1 = Highest DPS)",
+    y = "Method / Threshold"
+  )
+
+plot_heatmap
+```
+
+## Plot 2: DPS Line Plot
+
+DPS decay across ranked dimension pairs for each method-threshold combination, with line type distinguishing methods.
+
+```{r}
+#| label: fig-dps-line
+#| fig-width: 10
+#| fig-height: 5
+
+plot_line <- dps_all |>
+  ggplot(aes(
+    x = dps_rank, y = path2d_dps,
+    color = method_threshold, linetype = method
+  )) +
+  geom_line(linewidth = 0.8) +
+  geom_point(size = 2.5) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray50") +
+  scale_linetype_manual(values = c(UMAP = "solid", VAE = "dashed")) +
+  scale_color_brewer(palette = "Set1", name = "Method / Threshold") +
+  scale_x_continuous(breaks = 1:15) +
+  labs(
+    x = "Dimension Pair Rank (1 = Highest DPS)",
+    y = "Path2D DPS",
+    linetype = "Method"
+  )
+
+plot_line
+```
+
+## Plot 3: DPS Bar Chart
+
+Bar chart of DPS values per dimension pair, faceted by method-threshold with independent x-axis ordering per panel.
+
+```{r}
+#| label: fig-dps-bar
+#| fig-width: 12
+#| fig-height: 10
+
+plot_bar <- dps_all |>
+  mutate(
+    dim_key = paste(method, threshold, dim_pair_label, sep = "___"),
+    dim_key = reorder(dim_key, -dps_rank)
+  ) |>
+  ggplot(aes(x = dim_key, y = path2d_dps, fill = path2d_dps)) +
+  geom_col() +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray50") +
+  scale_fill_gradient2(
+    low = "#2166ac", mid = "white", high = "#b2182b",
+    midpoint = 0, limits = c(-1, 1), name = "Path2D DPS"
+  ) +
+  scale_x_discrete(labels = \(x) str_remove(x, "^.*___")) +
+  facet_wrap(~ method_threshold, ncol = 2, scales = "free_x") +
+  labs(
+    x = "Dimension Pair",
+    y = "Path2D DPS"
+  ) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+plot_bar
+```
+
+## Save Outputs
+
+Save all three plots as PNG and RDS, plus the combined DPS tibble.
+
+```{r}
+#| label: save-outputs
+
+output_dir <- here("VAE_UMAP_comb/output")
+fs::dir_create(output_dir)
+
+plots <- list(
+  fig_dps_heatmap = list(plot = plot_heatmap, w = 14, h = 5),
+  fig_dps_line = list(plot = plot_line, w = 10, h = 5),
+  fig_dps_bar = list(plot = plot_bar, w = 12, h = 10)
+)
+
+iwalk(plots, \(spec, nm) {
+  ggsave(
+    here(output_dir, glue("{nm}.png")),
+    spec$plot, width = spec$w, height = spec$h, dpi = 300,
+    bg = "white", device = ragg::agg_png
+  )
+  write_rds(spec$plot, here(output_dir, glue("{nm}.rds")))
+})
+
+write_rds(dps_all, here(output_dir, "dps_all.rds"))
+```

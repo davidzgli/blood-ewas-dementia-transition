@@ -1,0 +1,138 @@
+---
+title: "UMAP Embedding (Lite)"
+subtitle: "Single configuration (nn=10, md=0.5), seed-averaged, thresholds 7 & 8"
+---
+
+## Overview
+
+Compute 6-component UMAP embeddings for thresholds 7 and 8 using a single parameter configuration (n_neighbors=10, min_dist=0.5) with 5 random seeds, then average embeddings across seeds per subject. This combination was selected as the best Path2D DPS configuration by a parameter sweep; the sweep itself is not part of this release.
+
+## Setup
+
+```{r}
+#| label: load-packages
+#| echo: false
+
+pacman::p_load(umap, install = FALSE)
+
+conflicted::conflict_prefer_all("dplyr", quiet = TRUE)
+```
+
+## Constants
+
+```{r}
+#| label: constants
+
+THRESHOLDS <- c(7, 8)
+N_COMPONENTS <- 6
+N_NEIGHBORS <- 10
+MIN_DIST <- 0.5
+RANDOM_SEEDS <- c(123, 223, 323, 423, 523)
+```
+
+## Load Data
+
+Load adjusted methylation matrices for each threshold.
+
+```{r}
+#| label: load-data
+
+meth_data <- THRESHOLDS |>
+  set_names(paste0("threshold_", THRESHOLDS)) |>
+  map(function(threshold) {
+    file_path <- here(glue(
+      "data/collaborator_only/adjusted_meth/adjusted_methylation_scaled_nlog10p_gte_{threshold}.rds"
+    ))
+    data <- read_rds(file_path)
+
+    methylation_matrix <- data |>
+      select(starts_with("cg")) |>
+      as.matrix()
+
+    scaled_matrix <- scale(methylation_matrix, center = TRUE, scale = TRUE)
+
+    list(
+      scaled_matrix = scaled_matrix,
+      subject_ids = data$subject_id,
+      trajectory_labels = data$demcat,
+      n_subjects = nrow(scaled_matrix),
+      n_cpg_sites = ncol(scaled_matrix)
+    )
+  })
+
+walk2(names(meth_data), meth_data, \(nm, ds) {
+  message(glue("{nm}: {ds$n_subjects} subjects, {ds$n_cpg_sites} CpGs"))
+})
+```
+
+## Run UMAP
+
+Run UMAP for each threshold x seed combination (10 total), then average across seeds.
+
+```{r}
+#| label: run-umap
+
+run_umap_single <- function(data_matrix, seed) {
+  # uwot (not the umap package): its spectral init is seeded deterministically, so
+  # results are bit-reproducible run-to-run. n_sgd_threads = 1 is REQUIRED for
+  # reproducibility (multi-threaded SGD is non-deterministic). Returns the layout matrix.
+  uwot::umap(
+    data_matrix,
+    n_neighbors   = N_NEIGHBORS,
+    min_dist      = MIN_DIST,
+    n_components  = N_COMPONENTS,
+    init          = "spectral",
+    seed          = seed,
+    n_threads     = 1,
+    n_sgd_threads = 1,
+    verbose       = FALSE
+  )
+}
+
+fs::dir_create(here("UMAP/lite/output"))
+
+for (threshold in THRESHOLDS) {
+  ds <- meth_data[[glue("threshold_{threshold}")]]
+  message(glue("Processing threshold {threshold}..."))
+  tictoc::tic(glue("Threshold {threshold}"))
+
+  # Run UMAP with each seed
+  embeddings <- map(RANDOM_SEEDS, \(seed) {
+    message(glue("  Seed {seed}..."))
+    run_umap_single(ds$scaled_matrix, seed)
+  })
+
+  # Average across seeds
+  avg_embedding <- Reduce("+", embeddings) / length(embeddings)
+
+  # Create output tibble
+  embedding_tbl <- tibble(
+    subject_id = ds$subject_ids,
+    demcat = ds$trajectory_labels
+  ) |>
+    bind_cols(
+      as_tibble(avg_embedding, .name_repair = ~paste0("umap_", 1:N_COMPONENTS))
+    )
+
+  # Save
+  write_rds(
+    embedding_tbl,
+    here(glue("UMAP/lite/output/embedding_threshold_{threshold}.rds"))
+  )
+
+  tictoc::toc()
+  message(glue("  Saved: embedding_threshold_{threshold}.rds ({nrow(embedding_tbl)} subjects)"))
+}
+```
+
+## Verify Outputs
+
+```{r}
+#| label: verify
+
+walk(THRESHOLDS, \(threshold) {
+  emb <- read_rds(here(glue("UMAP/lite/output/embedding_threshold_{threshold}.rds")))
+  message(glue("Threshold {threshold}: {nrow(emb)} rows, {ncol(emb)} cols"))
+  message(glue("  Demcat levels: {paste(unique(emb$demcat), collapse = ', ')}"))
+})
+```

@@ -1,0 +1,183 @@
+---
+title: "Gene Ontology Results Excel Export"
+---
+
+```{r}
+#| label: load-packages
+#| echo: false
+
+pacman::p_load(openxlsx2, readxl, install = FALSE)
+
+conflicted::conflict_prefer("filter", "dplyr")
+
+# Source the function for adding GO data to Excel
+source(here("custom_func/add_go_to_excel_function.R"))
+```
+
+## Introduction
+
+This document prepares an Excel file containing the Gene Ontology (GO) enrichment results for the top 1000 and top 2000 CG sites. Each dataset will be placed in a separate sheet with appropriate formatting.
+
+## Load Data
+
+### Load GO results
+
+```{r}
+#| label: load-data
+
+# Path to the RDS files
+go_path <- here("pathway_analysis/02_gene_ontology/output")
+
+# Read the GO results RDS files
+top1000_go <- readRDS(file.path(go_path, "top1000_all_GO_results.rds")) |> 
+  # Filter for significant results (p.adjust < 0.05)
+  dplyr::filter(p.adjust < 0.05)
+top2000_go <- readRDS(file.path(go_path, "top2000_all_GO_results.rds")) |> 
+  dplyr::filter(p.adjust < 0.05)
+
+
+# Check the structure of the data
+cat("Top 1000 GO results:\n")
+glimpse(top1000_go)
+cat("Top 2000 GO results:\n")
+glimpse(top2000_go)
+```
+
+### Load function categories
+
+```{r}
+#| label: load-function-categories
+
+top1000_function_categories <- read_excel(
+  here("pathway_analysis/04_function_categorization/output/top1000_condition_specific_GO_terms_auto_cat.xlsx")
+)
+top2000_function_categories <- read_excel(
+  here("pathway_analysis/04_function_categorization/output/top2000_condition_specific_GO_terms_auto_cat.xlsx")
+)
+
+# Check the structure of the data
+cat("Top 1000 function categories:\n")
+glimpse(top1000_function_categories)
+cat("Top 2000 function categories:\n")
+glimpse(top2000_function_categories)
+```
+
+
+## Merge GO results with function categories
+
+```{r}
+#| label: merge-go-and-function-categories
+
+top1000_go_with_categories <- top1000_go |> 
+  left_join(select(top1000_function_categories, ID, biofunc_category = function_category), by = c("ID" = "ID")) |> 
+  # Is the function specific to a condition?
+  mutate(transition_specific = ifelse(is.na(biofunc_category), "No", "Yes")) |>
+  # Replace NA with ""
+  replace_na(list(biofunc_category = "")) |>
+  # Rename condition to transition
+  rename(transition = condition) |>
+  # Move biofunc_category to the end
+  relocate(biofunc_category, .after = last_col())
+
+top2000_go_with_categories <- top2000_go |> 
+  left_join(select(top2000_function_categories, ID, biofunc_category = function_category), by = c("ID" = "ID")) |> 
+  # Is the function specific to a condition?
+  mutate(transition_specific = ifelse(is.na(biofunc_category), "No", "Yes")) |>
+  # Replace NA with ""
+  replace_na(list(biofunc_category = "")) |>
+  # Rename condition to transition
+  rename(transition = condition) |>
+  # Move biofunc_category to the end
+  relocate(biofunc_category, .after = last_col())
+
+cat("Top 1000 GO results with function categories:\n")
+glimpse(top1000_go_with_categories)
+cat("Top 2000 GO results with function categories:\n")
+glimpse(top2000_go_with_categories)
+```
+
+
+## Create Excel Workbook
+
+```{r}
+#| label: create-excel
+
+# Start timing
+tic("Excel creation")
+
+# Create a workbook
+wb <- wb_workbook() |>
+  wb_set_bookview(window_height = 100000, window_width = 100000)
+
+# Add GO results for top 1000 CG sites
+suppl_data_order <- 7
+top1000_legend <- glue("Supplementary Data {suppl_data_order}. Gene Ontology (GO) enrichment analysis results for the top 1000 CpG sites. The analysis was performed using the clusterProfiler R package. Only GO terms with adjusted p-value < 0.05 are shown. The columns represent: 
+- transition: dementia transition type
+- ID: Gene Ontology term identifier
+- Description: Biological process description of the GO term
+- GeneRatio: Number of genes from input list in this GO term divided by total number of input genes
+- BgRatio: Number of genes in this GO term in the background divided by total number of background genes
+- RichFactor: Fraction of all known genes in this pathway found in the data (calculated as number of genes in pathway divided by number of genes in pathway background)
+- FoldEnrichment: How many times more frequent the pathway is in the gene list compared to background
+- zScore: Statistical measure of enrichment strength (higher absolute values indicate stronger enrichment)
+- pvalue: Raw p-value from the Fisher's exact test (lower values indicate stronger statistical significance)
+- p.adjust: P-value adjusted for multiple testing using Benjamini-Hochberg method (controls false discovery rate)
+- qvalue: Another type of adjusted p-value (similar to p.adjust but more conservative)
+- geneID: List of genes from the input that belong to this GO term (separated by '/')
+- Count: Number of genes from the input list in this GO term
+- transition_specific: Indicates whether the GO term is specific to a particular dementia transition ('Yes' or 'No')
+- biofunc_category: The biological function category assigned to the GO term (if transition-specific)") |> 
+  as.character()
+
+wb <- wb |> 
+  add_go_to_excel(
+    df = top1000_go_with_categories, 
+    sheet_name = "GO_top1000", 
+    legend = top1000_legend
+  )
+
+# Add GO results for top 2000 CG sites
+suppl_data_order <- 8
+top2000_legend <- glue("Supplementary Data {suppl_data_order}. Gene Ontology (GO) enrichment analysis results for the top 2000 CpG sites. The analysis was performed using the clusterProfiler R package. Only GO terms with adjusted p-value < 0.05 are shown. The columns represent: 
+- transition: dementia transition type
+- ID: Gene Ontology term identifier
+- Description: Biological process description of the GO term
+- GeneRatio: Number of genes from input list in this GO term divided by total number of input genes
+- BgRatio: Number of genes in this GO term in the background divided by total number of background genes
+- RichFactor: Fraction of all known genes in this pathway found in the data (calculated as number of genes in pathway divided by number of genes in pathway background)
+- FoldEnrichment: How many times more frequent the pathway is in the gene list compared to background
+- zScore: Statistical measure of enrichment strength (higher absolute values indicate stronger enrichment)
+- pvalue: Raw p-value from the enrichment test (lower values indicate stronger statistical significance)
+- p.adjust: P-value adjusted for multiple testing using Benjamini-Hochberg method (controls false discovery rate)
+- qvalue: Another type of adjusted p-value (similar to p.adjust but more conservative)
+- geneID: List of genes from the input that belong to this GO term (separated by '/')
+- Count: Number of genes from the input list in this GO term
+- transition_specific: Indicates whether the GO term is specific to a particular dementia transition ('Yes' or 'No')
+- biofunc_category: The biological function category assigned to the GO term (if transition-specific)") |> 
+  as.character()
+
+wb <- wb |> 
+  add_go_to_excel(
+    df = top2000_go_with_categories, 
+    sheet_name = "GO_top2000", 
+    legend = top2000_legend
+  )
+
+# Save the workbook
+fs::dir_create(here("extended_data/output"))
+output_file <- here("extended_data/output/go_enrichment_results.xlsx")
+wb |> wb_save(output_file)
+
+# End timing
+toc()
+
+cat(glue("Excel file saved to: {output_file}\n"))
+```
+
+## Summary
+
+This document has created an Excel workbook with two sheets:
+1. GO_top1000 - Gene Ontology enrichment results for the top 1000 CG sites
+2. GO_top2000 - Gene Ontology enrichment results for the top 2000 CG sites
+
+Each sheet contains the significant GO terms (adjusted p-value < 0.05) formatted according to the specifications in the `add_go_to_excel` function.

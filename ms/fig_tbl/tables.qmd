@@ -1,0 +1,66 @@
+---
+title: "Tables for the manuscript"
+---
+
+## Overview
+
+This document compiles main and supplementary tables for the dementia EWAS manuscript.
+
+{{< pagebreak >}}
+
+![](/demographics/output/dementia_category_table_base.png){#tbl-dementia-category}
+
+**[@tbl-dementia-category]** | **Dementia transition categories in the study population.** Distribution of 2,491 participants across six cognitive transition categories based on baseline and follow-up assessments over 13 years. Categories include: stable normal (subjects maintaining normal cognition throughout), normal2mci (transition from normal cognition to mild cognitive impairment), stable_mci (subjects with MCI at baseline who remained stable), normal2incid (direct transition from normal cognition to incident dementia), mci2incid (transition from MCI to incident dementia), and prevalent dementia (dementia present at baseline). Follow-up time is presented as mean (standard deviation).
+
+{{< pagebreak >}}
+
+
+![](/demographics/output/covariate_table_by_dementia_transition.png){#supptbl-covariate}
+
+**[@supptbl-covariate]** | **Covariate characteristics stratified by dementia transition category.** Summary statistics for demographic and blood cell composition covariates across the six cognitive transition categories (stable normal, normal2mci, stable_mci, normal2incid, mci2incid, and prevalent dementia). Variables include age, sex, smoking status, and estimated blood cell proportions (B cells, CD4T cells, CD8T cells, eosinophils, monocytes, and neutrophils). Continuous variables are presented as mean (standard deviation), while categorical variables are shown as count (percentage). P-values were calculated using Kruskal-Wallis rank sum test for continuous variables, and Pearson's chi-squared test for categorical variables.
+
+{{< pagebreak >}}
+
+![](/demographics/output/baseline_characteristics_by_dementia_no_apoe.png){#supptbl-baseline}
+
+**[@supptbl-baseline]** | **Baseline clinical and demographic characteristics stratified by dementia transition category.** Comprehensive summary of participant characteristics across cognitive transition categories, including education level, body mass index (BMI), blood pressure measurements (systolic and diastolic), serum cholesterol, triglycerides, fasting glucose, memory scores, processing speed scores, and working memory scores. Continuous variables are presented as mean (standard deviation), and categorical variables as count (percentage). P-values were calculated using chi-squared test for categorical variables and Kruskal-Wallis rank sum test for continuous variables.
+
+{{< pagebreak >}}
+
+![](/demographics/output/cg12179179_examplar_model.png){#supptbl-exemplar width=50%}
+
+**[@supptbl-exemplar]** | **Example output from genome-wide DNA methylation association analysis.** Representative results from one CpG site (cg12179179) demonstrating the multivariate linear regression model applied systematically across 799,149 CpG sites. The model assessed associations between DNA methylation levels (M-values) and cognitive status transitions while adjusting for age, sex, smoking status, and blood cell-type proportions (B cells, CD4T cells, CD8T cells, eosinophils, monocytes, and neutrophils). Beta coefficients represent effect sizes indicating changes in methylation levels relative to reference categories (stable normal cognition for dementia transition, male for sex, and non-smoker for smoking status). The 95% confidence intervals (CI) and P-values indicate statistical significance. This analytical framework was systematically applied to all CpG sites across the genome to identify methylation changes associated with cognitive status transitions.
+
+{{< pagebreak >}}
+
+![](/APOE/output/apoe_dementia_cross_table.png){#supptbl-apoe-dementia}
+
+**[@supptbl-apoe-dementia]** | **Cross-tabulation of APOE genotype and dementia transition category.** Distribution of 2,487 subjects across six APOE genotypes (ε2/ε2, ε2/ε3, ε3/ε3, ε2/ε4, ε3/ε4, ε4/ε4) stratified by dementia transition category. Row percentages are shown in parentheses. The chi-square test indicates a highly significant association between APOE genotype and dementia transition (*P* = 4.18 × 10^−13^).
+
+{{< pagebreak >}}
+
+![](/validation/output/reference_comparison_table.png){#supptbl-reference-comparison}
+
+**[@supptbl-reference-comparison]** | **Comparison of the AGES cohort with published dementia EWAS studies used for validation.** Summary of study design, methylation platform, statistical methodology, comparison groups, sample sizes, and equivalent AGES dementia transition comparisons for each reference cohort. The ADNI/AIBL meta-analysis investigated Alzheimer's disease (AD) versus cognitively normal (CN) controls. The AddNeuroMed study compared AD versus CN and MCI versus CN groups.
+
+{{< pagebreak >}}
+
+![](/pathway_analysis/05_patch_fig_and_make_table/output/top1000_normal2mci_1_supplementary_table.png){#supptbl-top1000-normal2mci}
+
+
+{{< pagebreak >}}
+
+![](/pathway_analysis/05_patch_fig_and_make_table/output/top1000_stable_mci_supplementary_table.png){#supptbl-top1000-stable-mci}
+
+
+
+![](/pathway_analysis/05_patch_fig_and_make_table/output/top1000_normal2incid_supplementary_table.png){#supptbl-top1000-normal2incid}
+
+![](/pathway_analysis/05_patch_fig_and_make_table/output/top1000_mci2incid_supplementary_table.png){#supptbl-top1000-mci2incid}
+
+![](/pathway_analysis/05_patch_fig_and_make_table/output/top1000_prev_supplementary_table.png){#supptbl-top1000-prev}
+
+
+**Supplementary Table [-@supptbl-top1000-normal2mci]–[-@supptbl-top1000-prev].** **Dementia transition-specific Gene Ontology (GO) terms.**  GO terms are derived via enrichment analysis using the genes associated with the top 1000 CpG sites in a dementia transitiion, categorized by functional domains and sorted by adjusted p-values (Padj) derived from Fisher's one-sided test with Benjamini-Hochberg correction. Only GO terms uniquely significant in the one transition (Padj < 0.05) and non-significant in other dementia progression stages are shown. Terms are grouped into broader functional categories to highlight biological processes specifically altered in a transition. Only GO terms in selected functional categories are shown for normal2mic transition. See the extended data for the full list of GO terms and enrichment analysis results.
+
+{{< pagebreak >}}

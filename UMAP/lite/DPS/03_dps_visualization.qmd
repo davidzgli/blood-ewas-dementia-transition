@@ -1,0 +1,188 @@
+---
+title: "Path2D DPS Visualization (Lite)"
+subtitle: "Heatmaps, line plots, histograms, and bar charts for thresholds 7 & 8"
+---
+
+## Overview
+
+Visualize Path2D DPS distributions and rankings across dimension pairs and thresholds.
+
+## Setup
+
+```{r}
+#| label: load-packages
+#| echo: false
+
+pacman::p_load(patchwork, install = FALSE)
+
+conflicted::conflict_prefer_all("dplyr", quiet = TRUE)
+```
+
+## Constants
+
+```{r}
+#| label: constants
+
+THRESHOLDS <- c(7, 8)
+```
+
+## Load DPS Results
+
+```{r}
+#| label: load-data
+
+dps_results <- THRESHOLDS |>
+  map(\(t) read_rds(here(glue("UMAP/lite/output/dps_results_threshold_{t}.rds")))) |>
+  list_rbind()
+
+message(glue("DPS results: {nrow(dps_results)} rows"))
+```
+
+## DPS Heatmap
+
+DPS values for dimension pairs ranked by performance within each threshold.
+
+```{r}
+#| label: fig-dps-heatmap
+#| fig-width: 14
+#| fig-height: 4
+
+plot_heatmap <- ggplot(
+  dps_results,
+  aes(x = dps_rank, y = factor(threshold), fill = path2d_dps)
+) +
+  geom_tile(color = "white", linewidth = 1) +
+  geom_text(
+    aes(label = sprintf("%.2f", path2d_dps)),
+    size = 3, fontface = "bold"
+  ) +
+  scale_fill_gradient2(
+    low = "#2166ac", mid = "white", high = "#b2182b",
+    midpoint = 0, limits = c(-1, 1), name = "Path2D DPS"
+  ) +
+  scale_x_continuous(breaks = 1:15, expand = c(0, 0)) +
+  scale_y_discrete(expand = c(0, 0)) +
+  labs(
+    title = "Path2D DPS by Dimension Pair Rank",
+    x = "Dimension Pair Rank (1 = Highest DPS)",
+    y = "Threshold"
+  ) +
+  theme_minimal() +
+  theme(panel.grid = element_blank(), legend.position = "right")
+
+plot_heatmap
+```
+
+## DPS Line Plot
+
+DPS decay across ranked dimension pairs, colored by threshold.
+
+```{r}
+#| label: fig-dps-line
+#| fig-width: 10
+#| fig-height: 5
+
+plot_line <- ggplot(
+  dps_results,
+  aes(x = dps_rank, y = path2d_dps, color = factor(threshold))
+) +
+  geom_line(linewidth = 0.8) +
+  geom_point(size = 2.5) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray50") +
+  scale_color_brewer(palette = "Set1", name = "Threshold") +
+  scale_x_continuous(breaks = 1:15) +
+  labs(
+    title = "Path2D DPS by Dimension Pair Rank",
+    x = "Dimension Pair Rank (1 = Highest DPS)",
+    y = "Path2D DPS"
+  ) +
+  theme_minimal()
+
+plot_line
+```
+
+## DPS Distribution
+
+Histogram of Path2D scores per threshold.
+
+```{r}
+#| label: fig-dps-histogram
+#| fig-width: 10
+#| fig-height: 5
+
+plot_hist <- ggplot(dps_results, aes(x = path2d_dps, fill = factor(threshold))) +
+  geom_histogram(bins = 15, alpha = 0.7, position = "identity") +
+  scale_fill_brewer(palette = "Set1", name = "Threshold") +
+  labs(
+    title = "Distribution of Path2D DPS Values",
+    x = "Path2D DPS",
+    y = "Count"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+
+plot_hist
+```
+
+## Top Dimension Pairs
+
+Bar chart showing dim pair labels for top-ranked pairs.
+
+```{r}
+#| label: fig-dps-bar
+#| fig-width: 12
+#| fig-height: 6
+
+dps_top <- dps_results |>
+  mutate(
+    dim_pair_label = glue("{dimx} vs {dimy}"),
+    threshold_label = glue("Threshold {threshold}")
+  )
+
+plot_bar <- ggplot(
+  dps_top,
+  aes(x = reorder(dim_pair_label, -dps_rank), y = path2d_dps, fill = factor(threshold))
+) +
+  geom_col(alpha = 0.8) +
+  facet_wrap(~threshold_label, ncol = 1, scales = "free_x") +
+  scale_fill_brewer(palette = "Set1", name = "Threshold") +
+  labs(
+    title = "Path2D DPS by Dimension Pair",
+    x = "Dimension Pair",
+    y = "Path2D DPS"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    legend.position = "none"
+  )
+
+plot_bar
+```
+
+## Save Plots
+
+```{r}
+#| label: save-plots
+
+fig_dir <- here("UMAP/lite/DPS/output/fig_tbl")
+fs::dir_create(fig_dir)
+
+plots <- list(
+  fig_dps_heatmap_path2d = list(plot = plot_heatmap, w = 14, h = 4),
+  fig_dps_line_path2d = list(plot = plot_line, w = 10, h = 5),
+  fig_dps_histogram_path2d = list(plot = plot_hist, w = 10, h = 5),
+  fig_dps_bar_path2d = list(plot = plot_bar, w = 12, h = 6)
+)
+
+iwalk(plots, \(spec, nm) {
+  ggsave(
+    here(fig_dir, glue("{nm}.png")),
+    spec$plot, width = spec$w, height = spec$h, dpi = 300,
+    bg = "white", device = ragg::agg_png
+  )
+  write_rds(spec$plot, here(fig_dir, glue("{nm}.rds")))
+})
+
+message(glue("Saved {length(plots)} plots to {fig_dir}"))
+```

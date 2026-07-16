@@ -1,0 +1,138 @@
+---
+title: "Path2D DPS Computation (Lite)"
+subtitle: "Compute Path2D DPS and rank dimension pairs for thresholds 7 & 8"
+---
+
+## Overview
+
+Compute Path2D DPS for each dimension pair per threshold using centroid coordinates, then rank dimension pairs by DPS score.
+
+## Setup
+
+```{r}
+#| label: load-packages
+#| echo: false
+
+conflicted::conflict_prefer_all("dplyr", quiet = TRUE)
+```
+
+```{r}
+#| label: load-custom-functions
+
+source(here("custom_func/compute_spatial_dps.R"))
+```
+
+## Constants
+
+```{r}
+#| label: constants
+
+THRESHOLDS <- c(7, 8)
+
+progression_order <- c(
+  "normal2mci", "stable_normal", "stable_mci",
+  "normal2incid", "mci2incid", "prev_dementia"
+)
+```
+
+## Load Centroid Data
+
+```{r}
+#| label: load-data
+
+centroids_list <- THRESHOLDS |>
+  set_names(paste0("threshold_", THRESHOLDS)) |>
+  map(\(t) read_rds(here(glue("UMAP/lite/output/centroids_threshold_{t}.rds"))))
+
+walk2(names(centroids_list), centroids_list, \(nm, c) {
+  message(glue("{nm}: {nrow(c)} centroid rows"))
+})
+```
+
+## Compute Path2D DPS
+
+```{r}
+#| label: compute-dps
+
+dps_results_list <- imap(centroids_list, \(centroids, threshold_name) {
+  t_num <- str_extract(threshold_name, "\\d+") |> as.integer()
+
+  # Get unique dimension pairs
+  dim_pairs <- centroids |> distinct(dimx, dimy)
+
+  dim_pairs |>
+    pmap_dfr(\(dimx, dimy) {
+      # Filter and order centroids for this dim pair
+      ordered_centroids <- centroids |>
+        filter(dimx == !!dimx, dimy == !!dimy, demcat %in% progression_order) |>
+        mutate(
+          demcat = factor(demcat, levels = progression_order),
+          order_int = as.integer(demcat)
+        ) |>
+        arrange(order_int)
+
+      # Skip if not all categories present
+      if (nrow(ordered_centroids) != length(progression_order)) return(NULL)
+
+      # Compute Path2D DPS
+      path2d <- compute_path2d_dps(ordered_centroids$x_mean, ordered_centroids$y_mean)
+
+      tibble(
+        threshold = t_num,
+        dimx = dimx,
+        dimy = dimy,
+        path2d_dps = path2d
+      )
+    })
+})
+
+# Combine and rank
+dps_results <- list_rbind(dps_results_list) |>
+  mutate(dps_rank = rank(-path2d_dps, ties.method = "first"), .by = threshold) |>
+  arrange(threshold, dps_rank)
+
+glimpse(dps_results)
+```
+
+## DPS Summary
+
+```{r}
+#| label: dps-summary
+
+dps_results |>
+  summarise(
+    mean_dps = mean(path2d_dps, na.rm = TRUE),
+    sd_dps = sd(path2d_dps, na.rm = TRUE),
+    min_dps = min(path2d_dps, na.rm = TRUE),
+    max_dps = max(path2d_dps, na.rm = TRUE),
+    .by = threshold
+  )
+```
+
+### Top 5 Dim Pairs per Threshold
+
+```{r}
+#| label: top-pairs
+
+dps_results |>
+  filter(dps_rank <= 5) |>
+  select(threshold, dps_rank, dimx, dimy, path2d_dps) |>
+  mutate(path2d_dps = round(path2d_dps, 4))
+```
+
+## Save Results
+
+```{r}
+#| label: save-results
+
+output_dir <- here("UMAP/lite/output")
+fs::dir_create(output_dir)
+
+for (t in THRESHOLDS) {
+  dps_results |>
+    filter(threshold == t) |>
+    write_rds(here(output_dir, glue("dps_results_threshold_{t}.rds")))
+}
+
+message("Saved: dps_results_threshold_{7,8}.rds")
+```

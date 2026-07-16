@@ -1,0 +1,113 @@
+---
+title: "Gene dementia function"
+---
+
+
+```{r}
+#| label: load-packages
+#| echo: false
+
+pacman::p_load(gt, install = FALSE)
+
+conflicted::conflict_prefer_all("dplyr", quiet = TRUE)
+```
+
+## Load Data
+
+### DMPs 
+
+```{r}
+# Derive the genome-wide significant (p < 1e-8) CpG set from the annotated table
+source(here("custom_func/select_sig_cg.R"))
+
+dmp <-
+  read_rds(here("data/upon_request/annotated_asso_wide.rds")) |>
+  select_sig_cg(8)
+
+glimpse(dmp)
+```
+
+### Dementia-related functions
+
+```{r}
+dementia_related_relevance <- read_rds(here("data/upon_request/dementia_relevance_for_top_genes.rds"))
+
+glimpse(dementia_related_relevance)
+```
+
+## Expand gene annotation
+
+```{r}
+
+gene_dmp <- 
+  dmp |> 
+  select(cg, chr, pos, great_anno, contains("p_value")) |>
+  separate_longer_delim(great_anno, delim = stringr::regex(" |, ", ignore_case = TRUE)) |> 
+  # Remove the rows like (+83228) or (-299) or (0)
+  filter(!str_detect(great_anno, "\\(\\+\\d+|\\-\\d+|\\(0\\)")) 
+
+glimpse(gene_dmp)
+```
+
+## Join dementia-related functions
+
+```{r}
+
+gene_dmp_dementia_relevance <- 
+  gene_dmp |> 
+  left_join(dementia_related_relevance, by = c("great_anno" = "gene_symbol"))
+  
+
+glimpse(gene_dmp_dementia_relevance)
+```
+
+
+## Make a table
+
+```{r}
+
+gene_dmp_dementia_relevance_gt_table <- 
+  gene_dmp_dementia_relevance |>
+  # filter(closeness_level <= 2) |>
+  select(cg, great_anno, dementia_relevance) |>
+  filter(!is.na(dementia_relevance)) |>
+  gt() |>
+  # Column labels
+  cols_label(
+    cg = "DMP",
+    great_anno = "Gene",
+    dementia_relevance = "Dementia relevance"
+  ) |>
+  # Column width
+  cols_width(
+    cg ~ px(100),
+    great_anno ~ px(100),
+    dementia_relevance ~ px(2000)
+  ) |>
+  # Bold column labels
+  tab_style(
+    style = cell_text(weight = "bold"),
+    locations = cells_column_labels()
+  ) |>
+  # Add a footnote for the DMPs
+  tab_footnote(
+    footnote = html("Differentially methylated probes passing the threshold of 1.0 x 10<sup>-8</sup>."),
+    locations = cells_column_labels(cg)
+  ) 
+
+gene_dmp_dementia_relevance_gt_table
+```
+
+
+## Save the result
+
+```{r}
+
+fs::dir_create("output")
+# The data 
+write_rds(gene_dmp_dementia_relevance, "output/gene_dmp_dementia_relevance.rds")
+
+# The table
+write_rds(gene_dmp_dementia_relevance_gt_table, "output/gene_dmp_dementia_relevance_gt_table.rds")
+```
+

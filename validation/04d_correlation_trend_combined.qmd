@@ -1,0 +1,228 @@
+---
+title: "Combined Correlation Trend Analysis"
+subtitle: "Comparing validation across ADNI/AIBL, CSF pTau, and CSF Total Tau"
+editor_options:
+  chunk_output_type: console
+---
+
+## Overview
+
+This analysis combines correlation results from multiple validation cohorts (ADNI/AIBL, CSF pTau, CSF Total Tau) to visualize how effect size correlations between AGES and external studies change across association P-value thresholds.
+
+```{r}
+#| label: load-packages
+#| echo: false
+
+# Additional packages (tidyverse, here, glue loaded via .Rprofile)
+pacman::p_load(ggtext, ggh4x, scales, install = FALSE)
+
+conflicted::conflict_prefer_all("dplyr", quiet = TRUE)
+```
+
+## Load and Combine Correlation Data
+
+Load correlation results from individual validation analyses and combine into a single dataset.
+
+```{r}
+#| label: load-data
+
+# Load and combine datasets with dataset identifier
+combined_data <- bind_rows(
+  read_rds(here("validation/output/correlation_results_ADNI_AIBL.rds")) |>
+    mutate(dataset = "ADNI/AIBL Meta-analysis"),
+  read_rds(here("validation/output/correlation_results_CSF_pTau_CN.rds")) |>
+    mutate(dataset = "CSF pTau (CN)"),
+  read_rds(here("validation/output/correlation_results_CSF_total_Tau_CN.rds")) |>
+    mutate(dataset = "CSF Total Tau (CN)")
+)
+
+glimpse(combined_data)
+```
+
+## Prepare Data for Faceted Plot
+
+Filter to key dementia transitions and reshape data for visualization.
+
+```{r}
+#| label: prepare-data
+
+# Filter to three key transitions and create metrics
+three_transitions <- c("prev", "mci2incid", "normal2incid")
+
+plot_data <- combined_data |>
+  filter(demcat %in% three_transitions) |>
+  mutate(
+    demcat = fct_relevel(demcat, "normal2incid", "mci2incid", "prev"),
+    neg_log10_cor_pval = -log10(cor_pval),
+    dataset = factor(dataset, levels = c(
+      "ADNI/AIBL Meta-analysis",
+      "CSF Total Tau (CN)",
+      "CSF pTau (CN)"
+    ))
+  ) |>
+  pivot_longer(
+    cols = c(cor_estimate, neg_log10_cor_pval, n_cpgs),
+    names_to = "metric",
+    values_to = "value"
+  ) |>
+  mutate(
+    metric = fct_recode(metric,
+      "Correlation Coefficient (<i>r</i>)" = "cor_estimate",
+      "-log10(Correlation <i>P</i>)" = "neg_log10_cor_pval",
+      "N CpG sites" = "n_cpgs"
+    ),
+    metric = fct_relevel(metric, "Correlation Coefficient (<i>r</i>)", "-log10(Correlation <i>P</i>)", "N CpG sites")
+  )
+
+glimpse(plot_data)
+```
+
+## Faceted Plot
+
+### Three separate datasets
+
+This plot shows how the correlation between AGES and validation datasets changes across significance thresholds. Each row represents a validation dataset, and each column shows a different metric.
+
+```{r}
+#| label: fig-correlation-trend-combined
+#| fig-width: 10
+#| fig-height: 8
+
+faceted_plot <- plot_data |>
+  ggplot(aes(x = cutoff_value, y = value, color = demcat)) +
+  geom_line(linewidth = 1) +
+  geom_point(size = 2) +
+  facet_grid2(dataset ~ metric, scales = "free", independent = "all") +
+  scale_x_reverse(breaks = c(4.5, 4, 3.5, 3, 2.5, 2)) +
+  scale_y_continuous(labels = scales::comma) +
+  scale_color_brewer(palette = "Dark2") +
+  labs(
+    x = "-log10(Association <i>P</i>-value) Threshold",
+    y = NULL,
+    color = "Dementia Category"
+  ) +
+  theme(
+    legend.position = "bottom",
+    legend.title = element_text(face = "bold"),
+    axis.text.x = element_text(angle = 0, hjust = 0.5),
+    strip.text = element_markdown(size = 11, face = "bold"),
+    axis.title.x = element_markdown(),
+    panel.spacing = unit(0.8, "lines")
+  )
+
+print(faceted_plot)
+```
+
+### Two datasets, ADNI/AIBL and CSF pTau
+
+```{r}
+#| label: fig-correlation-trend-two-datasets
+#| fig-width: 10
+#| fig-height: 6
+
+two_dataset_ptau_plot <- plot_data |>
+  filter(dataset != "CSF Total Tau (CN)", metric != "N CpG sites") |>
+  ggplot(aes(x = cutoff_value, y = value, color = demcat, linetype = dataset)) +
+  geom_line(linewidth = 1) +
+  geom_point(size = 2) +
+  facet_wrap(vars(metric), scales = "free") +
+  scale_x_reverse(breaks = c(4.5, 4, 3.5, 3, 2.5, 2)) +
+  scale_y_continuous(labels = scales::comma) +
+  scale_color_brewer(palette = "Dark2") +
+  labs(
+    x = "-log10(Association <i>P</i>-value) Threshold",
+    y = NULL,
+    color = "Dementia Transitions",
+    linetype = "Study"
+  ) +
+  theme(
+    legend.position = c(0.65, 0.7),
+    legend.title = element_text(face = "bold"),
+    axis.text.x = element_text(angle = 0, hjust = 0.5),
+    strip.text = element_markdown(size = 11, face = "bold"),
+    axis.title.x = element_markdown(),
+    panel.spacing = unit(0.8, "lines")
+  )
+
+print(two_dataset_ptau_plot)
+```
+
+### Two datasets, ADNI/AIBL and CSF Total Tau
+
+```{r}
+#| label: fig-correlation-trend-two-datasets-total-tau
+#| fig-width: 10
+#| fig-height: 6
+
+two_dataset_total_tau_plot <- plot_data |>
+  filter(dataset != "CSF pTau (CN)", metric != "N CpG sites") |>
+  ggplot(aes(x = cutoff_value, y = value, color = demcat, linetype = dataset)) +
+  geom_line(linewidth = 0.8) +
+  geom_point(size = 1.5) +
+  facet_wrap(vars(metric), scales = "free") +
+  scale_x_reverse(breaks = c(4.5, 4, 3.5, 3, 2.5, 2)) +
+  scale_y_continuous(labels = scales::comma) +
+  scale_color_brewer(palette = "Dark2") +
+  labs(
+    x = "-log10(Association <i>P</i>-value) Threshold",
+    y = NULL,
+    color = "Dementia Transitions",
+    linetype = "Study"
+  ) +
+  theme(
+    legend.position = c(0.65, 0.7),
+    legend.title = element_text(face = "bold"),
+    axis.text.x = element_text(angle = 0, hjust = 0.5),
+    strip.text = element_markdown(size = 11, face = "bold"),
+    axis.title.x = element_markdown(),
+    panel.spacing = unit(0.8, "lines")
+  )
+
+print(two_dataset_total_tau_plot)
+```
+
+## Export Figures
+
+Save correlation trend figures as PNG and RDS files for manuscript and downstream use.
+
+```{r}
+#| label: save-figures
+
+# Save three-dataset combined correlation trend plot (png and rds)
+ggsave(
+  here("validation/output/fig_correlation_trend_combined.png"),
+  faceted_plot,
+  width = 10,
+  height = 8,
+  dpi = 300,
+  bg = "white",
+  device = ragg::agg_png
+)
+write_rds(faceted_plot, here("validation/output/fig_correlation_trend_combined.rds"))
+
+# Save two-dataset plot (ADNI/AIBL + CSF pTau)
+ggsave(
+  here("validation/output/fig_correlation_trend_ADNI_AIBL_CSF_pTau.png"),
+  two_dataset_ptau_plot,
+  width = 10,
+  height = 6,
+  dpi = 300,
+  bg = "white",
+  device = ragg::agg_png
+)
+write_rds(two_dataset_ptau_plot, here("validation/output/fig_correlation_trend_ADNI_AIBL_CSF_pTau.rds"))
+
+# Save two-dataset plot (ADNI/AIBL + CSF Total Tau)
+ggsave(
+  here("validation/output/fig_correlation_trend_ADNI_AIBL_CSF_total_Tau.png"),
+  two_dataset_total_tau_plot,
+  width = 10,
+  height = 6,
+  dpi = 300,
+  bg = "white",
+  device = ragg::agg_png
+)
+write_rds(two_dataset_total_tau_plot, here("validation/output/fig_correlation_trend_ADNI_AIBL_CSF_total_Tau.rds"))
+
+message("Figures saved to validation/output/")
+```

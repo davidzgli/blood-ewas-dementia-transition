@@ -1,0 +1,214 @@
+---
+title: "Combined UMAP + VAE Dimension ANOVA"
+subtitle: "Side-by-side comparison of ANOVA (value ~ demcat) across methods and thresholds"
+---
+
+## Overview
+
+This document computes ANOVA (dim_value ~ demcat) for each of the 6 latent dimensions from both UMAP and VAE across thresholds 8 and 7, then visualizes the combined results with a faceted barplot, a heatmap, and a line plot.
+
+## Load Packages
+
+```{r}
+#| label: load-packages
+#| echo: false
+
+pacman::p_load(patchwork, install = FALSE)
+conflicted::conflict_prefer_all("dplyr", quiet = TRUE)
+```
+
+## Load Data
+
+Load embedding data from both methods and both thresholds, rename columns to generic `dim_1:dim_6`, pivot to long format, and combine.
+
+```{r}
+#| label: load-data
+
+methods <- list(
+  UMAP = list(
+    path_template = \(th) here(glue("UMAP/lite/output/embedding_threshold_{th}.rds")),
+    col_prefix = "umap_"
+  ),
+  VAE = list(
+    path_template = \(th) here(glue("VAE/lite/output/embedding_threshold_{th}.rds")),
+    col_prefix = "vae_"
+  )
+)
+
+thresholds <- c(8, 7)
+
+long_all <- map(names(methods), \(method) {
+  info <- methods[[method]]
+  map(thresholds, \(th) {
+    read_rds(info$path_template(th)) |>
+      rename_with(
+        \(x) str_replace(x, paste0("^", info$col_prefix), "dim_"),
+        starts_with(info$col_prefix)
+      ) |>
+      pivot_longer(
+        cols = dim_1:dim_6,
+        names_to = "dim_dir",
+        values_to = "dim_value"
+      ) |>
+      mutate(method = method, threshold = th)
+  }) |>
+    list_rbind()
+}) |>
+  list_rbind()
+
+glimpse(long_all)
+```
+
+## Compute ANOVA
+
+Compute ANOVA p-value for each method-threshold-dimension combination (24 rows), add -log10(p) and rank within each method-threshold group.
+
+```{r}
+#| label: compute-anova
+
+anova_all <- long_all |>
+  summarise(
+    p = anova(lm(dim_value ~ demcat))$`Pr(>F)`[1],
+    .by = c(method, threshold, dim_dir)
+  ) |>
+  mutate(
+    nlog10_p = -log10(p),
+    label = sprintf("italic(P) == %.2e", p) %>%
+      str_replace_all("e", " %*% 10^"),
+    dim_rank = rank(p),
+    method_threshold = glue("{method} Thr {threshold}"),
+    .by = c(method, threshold)
+  )
+
+anova_all
+```
+
+## Plot 1: Faceted Barplot
+
+ANOVA -log10(p) barplot for each method-threshold combination, with dimensions independently ordered by significance within each facet.
+
+```{r}
+#| label: fig-anova-barplot
+#| fig-width: 12
+#| fig-height: 10
+
+plot_barplot <- anova_all |>
+  mutate(
+    dim_key = paste(method, threshold, dim_dir, sep = "___"),
+    dim_key = reorder(dim_key, p, .desc = TRUE)
+  ) |>
+  ggplot(aes(x = nlog10_p, y = dim_key)) +
+  geom_col() +
+  geom_text(
+    aes(label = label),
+    hjust = 0, vjust = 0.5,
+    size = 8, size.unit = "pt",
+    parse = TRUE
+  ) +
+  scale_x_continuous(expand = expansion(mult = c(0.01, 0.35))) +
+  scale_y_discrete(labels = \(x) str_remove(x, "^.*___")) +
+  facet_wrap(~ method_threshold, ncol = 2, scales = "free_y") +
+  labs(x = expression(-log[10](ANOVA~italic(p)*"-value")), y = "Latent dimension")
+
+plot_barplot
+```
+
+## Plot 2: Heatmap
+
+Heatmap of -log10(p) values with dimensions ranked by significance (rank 1 = most significant) across method-threshold combinations.
+
+```{r}
+#| label: fig-anova-heatmap
+#| fig-width: 10
+#| fig-height: 5
+
+mid_val <- mean(range(anova_all$nlog10_p, na.rm = TRUE))
+
+plot_heatmap <- anova_all |>
+  mutate(
+    tile_label = paste0(dim_dir, "\n", round(nlog10_p, 2))
+  ) |>
+  ggplot(aes(x = dim_rank, y = method_threshold, fill = nlog10_p)) +
+  geom_tile(color = "white", linewidth = 1) +
+  geom_text(aes(label = tile_label), size = 3, fontface = "bold") +
+  scale_fill_gradient2(
+    low = "white", mid = "yellow", high = "darkred",
+    midpoint = mid_val, name = expression(-log[10](ANOVA~italic(p)))
+  ) +
+  scale_x_continuous(breaks = 1:6, expand = c(0, 0)) +
+  scale_y_discrete(expand = c(0, 0)) +
+  labs(
+    x = "Dimension Rank (1 = Most Significant)",
+    y = "Method / Threshold"
+  ) +
+  theme_minimal() +
+  theme(panel.grid = element_blank())
+
+plot_heatmap
+```
+
+## Plot 3: Line Plot
+
+-log10(p) across dimension ranks for each method-threshold combination, with line type distinguishing methods.
+
+```{r}
+#| label: fig-anova-lineplot
+#| fig-width: 10
+#| fig-height: 5
+
+plot_line <- anova_all |>
+  mutate(threshold_label = paste0("THR", threshold)) |>
+  ggplot(aes(
+    x = dim_rank, y = nlog10_p,
+    color = threshold_label, linetype = method
+  )) +
+  geom_line(linewidth = 0.8) +
+  geom_point(size = 2.5) +
+  scale_linetype_manual(values = c(UMAP = "solid", VAE = "dashed")) +
+  scale_color_manual(
+    values = c("THR8" = "#E41A1C", "THR7" = "#377EB8")
+  ) +
+  scale_x_continuous(breaks = 1:6) +
+  labs(
+    x = "Dimension Rank (1 = Most Significant)",
+    y = expression(-log[10](ANOVA~italic(p)*"-value")),
+    color = "Threshold",
+    linetype = "Method"
+  )
+
+plot_line
+```
+
+## Save Outputs
+
+Save all three plots as PNG and RDS, plus the ANOVA results tibble. Using `grDevices::png` device to render plotmath `%*%` correctly as multiplication sign.
+
+```{r}
+#| label: save-outputs
+
+output_dir <- here("VAE_UMAP_comb/output")
+fs::dir_create(output_dir)
+
+ggsave(
+  here(output_dir, "fig_anova_barplot.png"),
+  plot_barplot, width = 12, height = 10, dpi = 300,
+  bg = "white", device = grDevices::png
+)
+write_rds(plot_barplot, here(output_dir, "fig_anova_barplot.rds"))
+
+ggsave(
+  here(output_dir, "fig_anova_heatmap.png"),
+  plot_heatmap, width = 10, height = 5, dpi = 300,
+  bg = "white", device = grDevices::png
+)
+write_rds(plot_heatmap, here(output_dir, "fig_anova_heatmap.rds"))
+
+ggsave(
+  here(output_dir, "fig_anova_lineplot.png"),
+  plot_line, width = 10, height = 5, dpi = 300,
+  bg = "white", device = grDevices::png
+)
+write_rds(plot_line, here(output_dir, "fig_anova_lineplot.rds"))
+
+write_rds(anova_all, here(output_dir, "anova_all.rds"))
+```

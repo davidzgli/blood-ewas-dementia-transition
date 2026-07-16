@@ -1,0 +1,119 @@
+---
+title: "Patch main figure — pathway analysis (Figure 6)"
+---
+
+## Overview
+
+Compose the main pathway analysis figure (Figure 6): gene upset plot (a), GO term upset plot (b), and function categorization barplot (c) at publication column width.
+
+The dementia progress graph was removed from this composite on 2026-07-11 (it was panel d). Its producer
+`04_function_categorization/03_dementia_progress_graph.qmd` stays live: the standalone
+`.rds` it also writes is now unconsumed.
+
+```{r}
+#| label: load-packages
+#| echo: false
+
+pacman::p_load(patchwork, ggtext, install = FALSE)
+```
+
+```{r}
+#| label: load-theme
+#| echo: false
+
+source(here("custom_func/theme_main_fig.R"))
+set_pub_geom_defaults()
+```
+
+## Load Plot Objects
+
+Load pre-generated RDS plot objects for the top 1000 CpG pathway analysis.
+
+```{r}
+#| label: load-plots
+
+panel_a <- read_rds(
+  here("pathway_analysis/01_genes/output/top1000_all_genes_upset_plot.rds")
+)
+
+panel_b <- read_rds(
+  here("pathway_analysis/03_transition_specific_GO_terms/output/top1000_condition_specific_GO_terms.rds")
+)
+
+panel_c <- read_rds(
+  here("pathway_analysis/04_function_categorization/output/top1000_barplot_function_category.rds")
+)
+```
+
+## Modify Panels
+
+Apply publication theme and rescale elements for 6.5" column width.
+
+```{r}
+#| label: modify-panels
+
+# Panels a & b: upset plots — use & to propagate theme to internal sub-plots
+panel_a <- panel_a & theme_main_fig()
+panel_b <- panel_b & theme_main_fig()
+
+# Panel c: function categorization barplot — angled axis labels, blank y title
+panel_c <- panel_c +
+  theme_main_fig() +
+  theme(
+    axis.title.y = element_blank(),
+    axis.text = element_markdown(angle = 15)
+  )
+```
+
+## Compose with Patchwork
+
+Arrange panels in a 2-column layout: a and b on the top row, c spanning the two rows below.
+
+```{r}
+#| label: compose-figure
+#| fig-width: 12
+#| fig-height: 9
+
+layout <- "
+AAABBB
+CCCCCC
+CCCCCC
+"
+
+fig_pathway_analysis <-
+  free(panel_a) +
+  free(panel_b) +
+  free(panel_c) +
+  plot_layout(design = layout, guides = "auto", axes = "keep", axis_titles = "collect") +
+  plot_annotation(tag_levels = "a")
+
+fig_pathway_analysis
+```
+
+## Save Figure
+
+Save at publication dimensions (600 DPI). Height is 6.75" rather than the former 9": panel d occupied
+one of the layout's four row-units (c spans two), so dropping it scales the canvas by 3/4 and leaves
+a, b and c at exactly their previous physical size.
+
+```{r}
+#| label: save-figure
+fs::dir_create(here("pathway_analysis/05_patch_fig_and_make_table/output"))
+
+
+png(here("pathway_analysis/05_patch_fig_and_make_table/output/fig_pathway_analysis.png"),
+    width = 7.5, height = 6.75, units = "in", res = 600)
+fig_pathway_analysis
+dev.off()
+```
+
+## Verify Output
+
+Confirm output file was created successfully.
+
+```{r}
+#| label: verify-output
+
+fs::file_info(here("pathway_analysis/05_patch_fig_and_make_table/output/fig_pathway_analysis.png")) |>
+  select(path, size, modification_time)
+```

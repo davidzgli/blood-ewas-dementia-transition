@@ -1,0 +1,301 @@
+---
+title: "Combined VAE + UMAP Boxplots by APOE Genotype"
+---
+
+## Overview
+
+Combine selected VAE and UMAP dimensions into single faceted boxplots for both thresholds, showing differences across APOE genotypes and risk roles.
+
+```{r}
+#| label: load-packages
+#| echo: false
+
+pacman::p_load(rstatix, colorspace, install = FALSE)
+
+conflicted::conflict_prefer_all("dplyr", quiet = TRUE)
+```
+
+## Load APOE genotype
+
+Load APOE genotype data (shared across both thresholds).
+
+```{r}
+apoe_geno <-
+  haven::read_sas(here("data/private/apoe_genotype.sas7bdat")) |>
+  clean_names() |>
+  mutate(genoapoe = factor(genoapoe, levels = c("22", "23", "33", "44", "34", "24")))
+```
+
+## Boxplot functions
+
+Adapted versions that use generic `dim_name`/`dim_value` columns to accommodate mixed VAE + UMAP dimensions.
+
+### By genotype
+
+```{r}
+#| output: false
+
+boxplot_colored_box <- function(data_for_boxplot, test_diff, dims, nrow = NULL) {
+  color_palette <- colorspace::qualitative_hcl(3, palette = "dark2")
+
+  plot_data <-
+    data_for_boxplot |>
+    filter(dim_name %in% dims) |>
+    mutate(dim_name = factor(dim_name, levels = dims))
+
+  test_data <-
+    test_diff |>
+    filter(dim_name %in% dims) |>
+    mutate(dim_name = factor(dim_name, levels = dims))
+
+  plain_boxplot <-
+    plot_data |>
+    ggplot(aes(x = genoapoe, y = dim_value)) +
+    geom_boxplot(outliers = FALSE, notch = FALSE) +
+    geom_text(
+      data = test_data,
+      aes(x = -Inf, y = Inf, label = label),
+      size = 7, size.unit = "pt", hjust = -0.1, vjust = 1.3,
+      color = "darkred", parse = TRUE
+    ) +
+    facet_wrap(~dim_name, scales = "free_y", nrow = nrow) +
+    labs(x = "APOE Genotype", y = "Dimension Value")
+
+  color_box_y <- c(0.01, 0.08)
+  label_vjust <- -0.5
+
+  colored_boxplot <-
+    plain_boxplot +
+    annotate("rect", xmin = 0.5, xmax = 2.5, ymin = I(color_box_y[1]), ymax = I(color_box_y[2]), fill = color_palette[1], alpha = 1) +
+    annotate("rect", xmin = 2.5, xmax = 3.5, ymin = I(color_box_y[1]), ymax = I(color_box_y[2]), fill = color_palette[2], alpha = 1) +
+    annotate("rect", xmin = 3.5, xmax = 6.5, ymin = I(color_box_y[1]), ymax = I(color_box_y[2]), fill = color_palette[3], alpha = 1) +
+    annotate("text", x = 1.5, y = I(color_box_y[1]), label = "Pro", vjust = label_vjust, size = 6, size.unit = "pt") +
+    annotate("text", x = 3, y = I(color_box_y[1]), label = "Neu", vjust = label_vjust, size = 6, size.unit = "pt") +
+    annotate("text", x = 5, y = I(color_box_y[1]), label = "Det", vjust = label_vjust, size = 6, size.unit = "pt") +
+    geom_text(
+      aes(x = genoapoe, y = stage(dim_value, after_stat = middle), label = round(after_stat(middle), 2)),
+      color = "#FF7F2A", size = 7, size.unit = "pt", angle = 90,
+      stat = "boxplot", vjust = "middle", hjust = -0.3
+    ) +
+    coord_cartesian(clip = "off")
+
+  return(colored_boxplot)
+}
+```
+
+### By role
+
+```{r}
+#| output: false
+
+boxplot_by_role <- function(data_for_boxplot, test_diff, dims, nrow = NULL) {
+  color_palette <- colorspace::qualitative_hcl(3, palette = "dark2")
+
+  plot_data <-
+    data_for_boxplot |>
+    filter(dim_name %in% dims) |>
+    mutate(dim_name = factor(dim_name, levels = dims))
+
+  test_data <-
+    test_diff |>
+    filter(dim_name %in% dims) |>
+    mutate(dim_name = factor(dim_name, levels = dims))
+
+  plot_data |>
+    ggplot(aes(x = apoe_role, y = dim_value)) +
+    geom_boxplot(outliers = FALSE, notch = FALSE, show.legend = FALSE) +
+    scale_fill_manual(values = color_palette) +
+    geom_text(
+      data = test_data,
+      aes(x = -Inf, y = Inf, label = label),
+      size = 7, size.unit = "pt", hjust = -0.1, vjust = 1.3,
+      color = "darkred", parse = TRUE, inherit.aes = FALSE
+    ) +
+    geom_text(
+      aes(x = apoe_role, y = stage(dim_value, after_stat = middle),
+          label = round(after_stat(middle), 2)),
+      color = "#FF7F2A", size = 7, size.unit = "pt", angle = 90,
+      stat = "boxplot", vjust = "middle", hjust = -0.3
+    ) +
+    facet_wrap(~dim_name, scales = "free_y", nrow = nrow) +
+    labs(x = "APOE Role", y = "Dimension Value") +
+    coord_cartesian(clip = "off")
+}
+```
+
+## Threshold 8
+
+### Load and prepare data
+
+Load UMAP and VAE embeddings for threshold 8, join APOE genotype, pivot to long format with unified column names, and bind rows.
+
+```{r}
+umap_embed_8 <- read_rds(here("UMAP/lite/output/embedding_threshold_8.rds"))
+vae_embed_8 <- read_rds(here("VAE/lite/output/embedding_threshold_8.rds"))
+
+dims_thr8 <- c("umap_5", "umap_1", "umap_2", "vae_6", "vae_2", "vae_4")
+
+umap_long_8 <-
+  umap_embed_8 |>
+  left_join(apoe_geno, by = c("subject_id" = "subr_id18")) |>
+  filter(!is.na(genoapoe)) |>
+  select(subject_id, genoapoe, starts_with("umap_")) |>
+  pivot_longer(cols = starts_with("umap_"), names_to = "dim_name", values_to = "dim_value")
+
+vae_long_8 <-
+  vae_embed_8 |>
+  left_join(apoe_geno, by = c("subject_id" = "subr_id18")) |>
+  filter(!is.na(genoapoe)) |>
+  select(subject_id, genoapoe, starts_with("vae_")) |>
+  pivot_longer(cols = starts_with("vae_"), names_to = "dim_name", values_to = "dim_value")
+
+data_thr8 <-
+  bind_rows(umap_long_8, vae_long_8) |>
+  mutate(genoapoe = factor(genoapoe, levels = c("22", "23", "33", "24", "34", "44"))) |>
+  mutate(apoe_role = case_when(
+    genoapoe %in% c("22", "23") ~ "Protective",
+    genoapoe == "33" ~ "Neutral",
+    genoapoe %in% c("24", "34", "44") ~ "Detrimental"
+  )) |>
+  mutate(apoe_role = factor(apoe_role, levels = c("Protective", "Neutral", "Detrimental")))
+
+glimpse(data_thr8)
+```
+
+### Kruskal-Wallis test by role
+
+```{r}
+kruskal_thr8 <-
+  data_thr8 |>
+  filter(dim_name %in% dims_thr8) |>
+  group_by(dim_name) |>
+  rstatix::kruskal_test(dim_value ~ apoe_role) |>
+  mutate(label = glue("italic(P) == {round(p, 5)}"))
+
+kruskal_thr8
+```
+
+### Boxplot by genotype
+
+```{r}
+#| label: fig-thr8-genotype
+#| fig-width: 12
+#| fig-height: 10
+
+p_geno_thr8 <- boxplot_colored_box(data_thr8, kruskal_thr8, dims_thr8, nrow = 2)
+
+p_geno_thr8
+```
+
+### Boxplot by role
+
+```{r}
+#| label: fig-thr8-role
+#| fig-width: 12
+#| fig-height: 10
+
+p_role_thr8 <- boxplot_by_role(data_thr8, kruskal_thr8, dims_thr8, nrow = 2)
+
+p_role_thr8
+```
+
+## Threshold 7
+
+### Load and prepare data
+
+Load UMAP and VAE embeddings for threshold 7, same preparation as threshold 8.
+
+```{r}
+umap_embed_7 <- read_rds(here("UMAP/lite/output/embedding_threshold_7.rds"))
+vae_embed_7 <- read_rds(here("VAE/lite/output/embedding_threshold_7.rds"))
+
+dims_thr7 <- c("umap_2", "umap_1", "umap_3", "vae_1", "vae_2")
+
+umap_long_7 <-
+  umap_embed_7 |>
+  left_join(apoe_geno, by = c("subject_id" = "subr_id18")) |>
+  filter(!is.na(genoapoe)) |>
+  select(subject_id, genoapoe, starts_with("umap_")) |>
+  pivot_longer(cols = starts_with("umap_"), names_to = "dim_name", values_to = "dim_value")
+
+vae_long_7 <-
+  vae_embed_7 |>
+  left_join(apoe_geno, by = c("subject_id" = "subr_id18")) |>
+  filter(!is.na(genoapoe)) |>
+  select(subject_id, genoapoe, starts_with("vae_")) |>
+  pivot_longer(cols = starts_with("vae_"), names_to = "dim_name", values_to = "dim_value")
+
+data_thr7 <-
+  bind_rows(umap_long_7, vae_long_7) |>
+  mutate(apoe_role = case_when(
+    genoapoe %in% c("22", "23") ~ "Protective",
+    genoapoe == "33" ~ "Neutral",
+    genoapoe %in% c("24", "34", "44") ~ "Detrimental"
+  )) |>
+  mutate(apoe_role = factor(apoe_role, levels = c("Protective", "Neutral", "Detrimental")))
+
+glimpse(data_thr7)
+```
+
+### Kruskal-Wallis test by role
+
+```{r}
+kruskal_thr7 <-
+  data_thr7 |>
+  filter(dim_name %in% dims_thr7) |>
+  group_by(dim_name) |>
+  rstatix::kruskal_test(dim_value ~ apoe_role) |>
+  mutate(label = glue("italic(P) == {round(p, 5)}"))
+
+kruskal_thr7
+```
+
+### Boxplot by genotype
+
+```{r}
+#| label: fig-thr7-genotype
+#| fig-width: 20
+#| fig-height: 5
+
+p_geno_thr7 <- boxplot_colored_box(data_thr7, kruskal_thr7, dims_thr7, nrow = 1)
+
+p_geno_thr7
+```
+
+### Boxplot by role
+
+```{r}
+#| label: fig-thr7-role
+#| fig-width: 20
+#| fig-height: 5
+
+p_role_thr7 <- boxplot_by_role(data_thr7, kruskal_thr7, dims_thr7, nrow = 1)
+
+p_role_thr7
+```
+
+## Save the boxplots
+
+Save all combined boxplots as both RDS and PNG files.
+
+```{r}
+fs::dir_create(here("APOE/output"))
+
+# Threshold 8
+write_rds(p_geno_thr8, here("APOE/output/apoe_boxplot_thr8_combined.rds"))
+ggsave(here("APOE/output/apoe_boxplot_thr8_combined.png"),
+       p_geno_thr8, width = 12, height = 10, dpi = 300, device = grDevices::png)
+
+write_rds(p_role_thr8, here("APOE/output/apoe_role_boxplot_thr8_combined.rds"))
+ggsave(here("APOE/output/apoe_role_boxplot_thr8_combined.png"),
+       p_role_thr8, width = 12, height = 10, dpi = 300, device = grDevices::png)
+
+# Threshold 7
+write_rds(p_geno_thr7, here("APOE/output/apoe_boxplot_thr7_combined.rds"))
+ggsave(here("APOE/output/apoe_boxplot_thr7_combined.png"),
+       p_geno_thr7, width = 20, height = 5, dpi = 300, device = grDevices::png)
+
+write_rds(p_role_thr7, here("APOE/output/apoe_role_boxplot_thr7_combined.rds"))
+ggsave(here("APOE/output/apoe_role_boxplot_thr7_combined.png"),
+       p_role_thr7, width = 20, height = 5, dpi = 300, device = grDevices::png)
+```

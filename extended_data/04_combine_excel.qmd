@@ -1,0 +1,83 @@
+---
+title: "Combine Excel Files"
+---
+
+```{r}
+#| label: load-packages
+#| echo: false
+
+pacman::p_load(openxlsx2, install = FALSE)
+
+conflicted::conflict_prefer("filter", "dplyr")
+```
+
+## Introduction
+
+This document combines multiple Excel files into a single Excel file while preserving the sheet names, order, and formatting of each original file. The files to be combined are:
+
+1. DMP403_cg_sites.xlsx
+2. go_enrichment_results.xlsx
+3. top2000_cg_sites.xlsx
+
+## Combine Excel Files
+
+```{r}
+#| label: combine-excel
+
+# Start timing
+tic("Excel combination")
+
+# Define the input Excel files in the order they should be processed
+input_files <- c(
+  here("extended_data/output/DMP403_cg_sites.xlsx"),
+  here("extended_data/output/top2000_cg_sites.xlsx"),
+  here("extended_data/output/go_enrichment_results.xlsx")
+)
+
+# Create a new workbook for the combined file
+combined_wb <- wb_workbook() |>
+  wb_set_bookview(window_height = 100000, window_width = 100000)
+
+# Process each input file
+for (file in input_files) {
+  cat(glue("Processing file: {file}\n"))
+  
+  # Load the source workbook
+  source_wb <- wb_load(file)
+  
+  # Get sheet names
+  sheet_names <- wb_get_sheet_names(source_wb)
+  
+  # Clone each sheet to the combined workbook
+  for (sheet_name in sheet_names) {
+    cat(glue("  Cloning sheet: {sheet_name}\n"))
+    
+    # Clone the worksheet from source workbook to target workbook
+    combined_wb <- wb_clone_worksheet(
+      wb = combined_wb,
+      old = sheet_name,
+      new = sheet_name,
+      from = source_wb
+    )
+  }
+}
+
+# Save the combined workbook
+fs::dir_create(here("extended_data/output"))
+output_file <- here("extended_data/output/suppl_data_all.xlsx")
+combined_wb |> wb_save(output_file)
+
+# End timing
+toc()
+
+cat(glue("Combined Excel file saved to: {output_file}\n"))
+```
+
+## Summary
+
+This document has created a combined Excel workbook that includes all sheets from the following files (in order):
+1. DMP403_cg_sites.xlsx
+2. go_enrichment_results.xlsx
+3. top2000_cg_sites.xlsx
+
+The sheet names, order, and formatting have been preserved in the combined file using the `wb_clone_worksheet()` function, which properly handles all Excel elements including styles, merged cells, and formatting.

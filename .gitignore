@@ -1,0 +1,128 @@
+# ==============================================================================
+# Two jobs:
+#   1. keep build artefacts and local state out of the repository
+#   2. HARD-FENCE data/ -- everything under data/ is ignored and exactly two
+#      files are re-included BY NAME at the bottom. Read the DATA section
+#      before touching it.
+# ==============================================================================
+
+# --- R / RStudio --------------------------------------------------------------
+.Rproj.user/
+.Rhistory
+.Rapp.history
+.RData
+.RDataTmp
+.Ruserdata
+.Renviron
+.httr-oauth
+rsconnect/
+
+# --- renv ---------------------------------------------------------------------
+# renv.lock, renv/activate.R and renv/settings.json ARE committed.
+# The restored library is not.
+renv/library/
+renv/local/
+renv/cellar/
+renv/lock/
+renv/python/
+renv/sandbox/
+renv/staging/
+
+# --- Python -------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+
+# --- Quarto / knitr -----------------------------------------------------------
+/.quarto/
+_freeze/
+*_cache/
+/cache/
+*.utf8.md
+*.knit.md
+*.typ
+**/*.quarto_ipynb
+.vdoc.*
+
+# --- Generated output ---------------------------------------------------------
+# every pipeline writes to <dir>/output/; nothing there is versioned
+output/
+render_out/
+logs/
+slurm_out/
+slurm-*.out
+autoencoder_*.txt
+
+# --- Generated documents and figures ------------------------------------------
+*.html
+*.pdf
+*.docx
+*.png
+*.svg
+*.jpg
+*.jpeg
+!ms/fig_tbl/placeholder.png
+!ms/reference/custom-reference-doc.docx
+
+# --- Data-shaped files, anywhere ----------------------------------------------
+*.rds
+*.csv
+*.tsv
+*.xlsx
+*.xlsm
+*.xls
+*.sas7bdat
+*.h5
+*.sqlite
+*.parquet
+
+# --- Scratch ------------------------------------------------------------------
+temp_hold/
+readyRemove/
+old_file/
+practice/
+
+# --- OS / editor / local tool state -------------------------------------------
+# Editor and assistant state belongs in your personal global gitignore, not here.
+.DS_Store
+._*
+.._..*
+.vscode/
+.idea/
+
+# ==============================================================================
+# DATA -- read this before editing
+# ==============================================================================
+#
+# Rule 1: git will NOT re-include a file if a PARENT DIRECTORY is excluded.
+#         So data/ must be excluded one level at a time, punching a hole at
+#         each level. `data/**` plus a negation DOES NOT WORK.
+#
+# Rule 2: the LAST matching pattern wins. The `*.rds` rule above would
+#         otherwise re-ignore the two public files, so these negations must
+#         come AFTER it. Do not move this block up.
+#
+# Rule 3: the allowlist is BY FILENAME, not by glob. Publishing another data
+#         file requires an explicit line here. That is deliberate: the failure
+#         mode is publishing restricted human-subjects data.
+
+# 1. ignore every entry directly under data/. Covers collaborator_only/,
+#    private/, published_data/, upon_request/, any future tier, and any symlink
+#    that manage_project/setup_data_links.sh puts there.
+/data/*
+
+# 2. punch a hole for the public tier directory only
+!/data/publicly_available/
+
+# 3. re-ignore everything inside the public tier ...
+/data/publicly_available/*
+
+# 4. ... except these two files, by name
+!/data/publicly_available/association_nlog10_p_value_lgeq5_wide.rds
+!/data/publicly_available/correlation_among_demcats_various_pval_cutoffs_stable_mci_lump.rds
+
+# 5. ... and the tier documentation
+!/data/LICENSE
+!/data/README.md
