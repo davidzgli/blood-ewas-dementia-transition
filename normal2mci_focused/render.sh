@@ -70,8 +70,6 @@ echo "--- Step 2: Patch figures ---"
 render_html "normal2mci_focused/patch_figures/01_patch_main_fig.qmd"
 render_html "normal2mci_focused/patch_figures/02_patch_suppl_fig.qmd"
 
-# Deck-only: sole producer of the three fig_pres_* PNGs that
-
 echo ""
 echo "========================================"
 echo "Render Complete"

@@ -177,8 +177,6 @@ render_html "pathway_analysis/05_patch_fig_and_make_table/01_create_suppl_table_
 render_html "pathway_analysis/05_patch_fig_and_make_table/02_patch_main_pathway_analysis.qmd"
 render_html "pathway_analysis/05_patch_fig_and_make_table/03_patch_suppl_pathway_analysis.qmd"
 
-# Deck-only: sole producer of the two fig_pres_* PNGs that
-
 echo ""
 echo "========================================"
 echo "Render Complete"

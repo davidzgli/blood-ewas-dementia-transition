@@ -102,10 +102,11 @@ gpu_available <- length(gpu_devices) > 0
 
 ::: {.callout-warning}
 The published latent coordinates were produced on a CUDA 12 GPU with TensorFlow 2.20.0.
-Fixed seeds plus `enable_op_determinism()` make a re-run on the same hardware reproduce the
-fit bit-for-bit, but a CPU run or a different GPU/CUDA/TensorFlow build yields a different
-basis: the same trajectory structure on rotated axes. Latent dimension indices are not
-comparable across training runs.
+Fixed seeds plus `enable_op_determinism()` reproduce the fit bit-for-bit on the same GPU —
+verified byte-identical across TensorFlow 2.20 and 2.21, so a minor TensorFlow upgrade is
+safe. What does rotate the basis is a change of *hardware*: a CPU run, or a different GPU or
+CUDA build, yields the same trajectory structure on rotated axes, whose latent dimension
+indices are not comparable across runs.
 :::
 
 ### Load Packages

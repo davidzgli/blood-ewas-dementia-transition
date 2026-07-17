@@ -5,6 +5,26 @@
       {
         "Name": "CRAN",
         "URL": "https://cloud.r-project.org"
+      },
+      {
+        "Name": "BioCsoft",
+        "URL": "https://bioconductor.org/packages/3.21/bioc"
+      },
+      {
+        "Name": "BioCann",
+        "URL": "https://bioconductor.org/packages/3.21/data/annotation"
+      },
+      {
+        "Name": "BioCexp",
+        "URL": "https://bioconductor.org/packages/3.21/data/experiment"
+      },
+      {
+        "Name": "BioCworkflows",
+        "URL": "https://bioconductor.org/packages/3.21/workflows"
+      },
+      {
+        "Name": "BioCbooks",
+        "URL": "https://bioconductor.org/packages/3.21/books"
       }
     ]
   },
@@ -1728,45 +1748,6 @@
       "Author": "Michel Lang [cre, aut] (<https://orcid.org/0000-0001-9754-0393>), Duncan Murdoch [aut], R Core Team [aut]",
       "Repository": "CRAN"
     },
-    "bacon": {
-      "Package": "bacon",
-      "Version": "1.36.0",
-      "Source": "Bioconductor",
-      "Type": "Package",
-      "Title": "Controlling bias and inflation in association studies using the empirical null distribution",
-      "Authors@R": "c(person(\"Maarten\", \"van Iterson\", email=\"mviterson@gmail.com\", role=\"cre\"), person(\"Erik\", \"van Zwet\", role=\"ctb\"))",
-      "Author": "Maarten van Iterson [aut, cre], Erik van Zwet [ctb]",
-      "Maintainer": "Maarten van Iterson <mviterson@gmail.com>",
-      "Description": "Bacon can be used to remove inflation and bias often observed in epigenome- and transcriptome-wide association studies. To this end bacon constructs an empirical null distribution using a Gibbs Sampling algorithm by fitting a three-component normal mixture on z-scores.",
-      "License": "GPL (>= 2)",
-      "Encoding": "UTF-8",
-      "Depends": [
-        "R (>= 3.3)",
-        "methods",
-        "stats",
-        "ggplot2",
-        "graphics",
-        "BiocParallel",
-        "ellipse"
-      ],
-      "Suggests": [
-        "BiocStyle",
-        "knitr",
-        "rmarkdown",
-        "testthat",
-        "roxygen2"
-      ],
-      "biocViews": "ImmunoOncology, StatisticalMethod, Bayesian, Regression, GenomeWideAssociation, Transcriptomics, RNASeq, MethylationArray, BatchEffect, MultipleComparison",
-      "RoxygenNote": "7.3.1",
-      "Collate": "'BaconClass.R' 'BaconMethods.R' 'bacon.R' 'normmixture.R'",
-      "VignetteBuilder": "knitr",
-      "NeedsCompilation": "yes",
-      "git_url": "https://git.bioconductor.org/packages/bacon",
-      "git_branch": "RELEASE_3_21",
-      "git_last_commit": "9c70686",
-      "git_last_commit_date": "2025-04-15",
-      "Repository": "Bioconductor 3.21"
-    },
     "base64enc": {
       "Package": "base64enc",
       "Version": "0.1-6",
@@ -3233,29 +3214,6 @@
       "NeedsCompilation": "no",
       "Author": "Hadley Wickham [cre, aut], Maximilian Girlich [aut], Mark Fairbanks [aut], Ryan Dickerson [aut], Posit Software, PBC [cph, fnd]",
       "Maintainer": "Hadley Wickham <hadley@posit.co>",
-      "Repository": "CRAN"
-    },
-    "ellipse": {
-      "Package": "ellipse",
-      "Version": "0.5.0",
-      "Source": "Repository",
-      "Title": "Functions for Drawing Ellipses and Ellipse-Like Confidence Regions",
-      "Author": "Duncan Murdoch and E. D. Chow (porting to R by Jesus M. Frias Celayeta)",
-      "Maintainer": "Duncan Murdoch <murdoch.duncan@gmail.com>",
-      "Description": "Contains various routines for drawing ellipses and ellipse-like confidence regions, implementing the plots described in Murdoch and Chow (1996, <doi:10.2307/2684435>). There are also routines implementing the profile plots described in Bates and Watts (1988, <doi:10.1002/9780470316757>).",
-      "Depends": [
-        "R (>= 2.0.0)",
-        "graphics",
-        "stats"
-      ],
-      "Suggests": [
-        "MASS"
-      ],
-      "LazyLoad": "yes",
-      "License": "GPL (>= 2)",
-      "URL": "https://github.com/dmurdoch/ellipse, https://dmurdoch.github.io/ellipse/",
-      "BugReports": "https://github.com/dmurdoch/ellipse/issues",
-      "NeedsCompilation": "no",
       "Repository": "CRAN"
     },
     "enrichplot": {

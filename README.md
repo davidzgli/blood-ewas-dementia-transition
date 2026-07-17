@@ -28,21 +28,11 @@ GO enrichment.
 
 ## Repository provenance — read before trying to reproduce
 
-This repository is the **downstream analysis stage** of a larger workflow. The upstream stages
-— cohort assembly, methylation preprocessing, and the genome-wide association scan — are **not
-public**: they operate on individual-level data that cannot be redistributed.
-
-```
-upstream   preprocessing + genome-wide association scan     [private]
-                        |
-                        v   derived data, by access tier
-this repo  downstream analysis + manuscript                 [public]
-```
-
-**What that means for you.** This repository does **not** run end-to-end from a clean clone. It
-consumes derived data produced upstream. Two of those files are shipped here; the rest are
-access-controlled. See *Data access* and the honest accounting in *What is not reproducible
-without permissions*.
+This repository is the **downstream analysis stage** of a larger workflow; the upstream cohort
+assembly, methylation preprocessing, and genome-wide association scan are **not public**. It
+therefore does **not** run end-to-end from a clean clone: the derived datasets it consumes must
+be obtained first, and most are access-controlled. See **Data access** for how to obtain them,
+and **What is not reproducible without permissions** for exactly what runs without them.
 
 ## Installation
 
@@ -91,14 +81,18 @@ VAE_VIRTUALENV=~/.venvs/dementia-vae
 ```
 
 If neither is set, `VAE/lite/01_vae_embedding.qmd` falls back to reticulate's default
-discovery and reports which interpreter it found.
+discovery. Nothing consumes `requirements.txt` automatically, so that fallback may provision a
+*different* TensorFlow than the pins below. It still runs and reports the interpreter it
+found, but set `VAE_VIRTUALENV` to a virtualenv built from `requirements.txt` to guarantee the
+versions the published fit used.
 
 > **Determinism vs. reproduction.** The VAE fixes its seeds and calls
-> `enable_op_determinism()`, so a re-run on the *same* hardware reproduces the fit bit-for-bit.
-> It does **not** reproduce across hardware. A CPU run, or a different GPU/CUDA/TensorFlow
-> build, yields the same trajectory structure on a **different basis**. Latent dimension
-> indices (`vae_N`, `umap_N`) are not comparable across training runs. The published figures
-> come from TensorFlow 2.20.0 / keras 3 on a CUDA 12 GPU.
+> `enable_op_determinism()`, so a re-run on the *same* GPU reproduces the fit bit-for-bit —
+> verified byte-identical across TensorFlow 2.20 and 2.21, so a minor TensorFlow upgrade is
+> safe. It does **not** reproduce across *hardware*: a CPU run, or a different GPU or CUDA
+> build, yields the same trajectory structure on a **different basis**, whose latent dimension
+> indices (`vae_N`, `umap_N`) are not comparable across runs. The published figures come from
+> TensorFlow 2.20.0 / keras 3 on a CUDA 12 GPU.
 
 ## Data access
 
@@ -115,7 +109,7 @@ discovery and reports which interpreter it found.
 
 | File | Gates |
 |---|---|
-| `whole_genome_wide.rds` | `validation/01,02,03,05` (all external validation); `dmp/02` |
+| `whole_genome_wide.rds` | `validation/01,02,03,05` (all external validation) |
 | `annotated_asso_wide.rds` | `normal2mci_focused/01`, `stable_mci_focused/01`, `extended_data/01,02`, `pathway_analysis/01_genes/01,02` |
 | `background_great_genes.rds` | `pathway_analysis/02_gene_ontology/02` (GO background) |
 | `manhattan_plot_data.rds` | `dmp/01` (Manhattan plot) |
@@ -205,23 +199,13 @@ quarto render ms/write-ms/dementia_EWAS.qmd --to typst
 The figure and table documents (`ms/fig_tbl/*.qmd`) embed PNGs from `*/output/`, so they need
 the pipelines to have run.
 
-### Not built by the orchestrator
+### One manual link
 
-`dmp/02_genomic_inflation.qmd` is a standalone genomic-inflation / bacon sensitivity analysis.
-No manuscript float uses it and `dmp/render.sh` does not call it. Run it by hand:
-
-```bash
-quarto render dmp/02_genomic_inflation.qmd --to html
-```
-
-`dmp/genomic_inflation_and_bacon.md` documents the method.
-
-`normal2mci_focused/04_gene_dementia_function.qmd` is likewise standalone, and it is the **one
-manual link in the chain**. It writes
-`normal2mci_focused/output/gene_dmp_dementia_relevance.rds`, and `dmp/01_Manhattan_plot.qmd` reads
-`data/private/gene_dmp_dementia_relevance.rds` — the same table, promoted between the two locations
-**by hand**. No script automates that copy, so `--all` alone will not rebuild the Manhattan plot's
-annotation from scratch. To regenerate it end to end:
+`normal2mci_focused/04_gene_dementia_function.qmd` is standalone and is the **one manual link in
+the chain**. It writes `normal2mci_focused/output/gene_dmp_dementia_relevance.rds`, and
+`dmp/01_Manhattan_plot.qmd` reads `data/private/gene_dmp_dementia_relevance.rds` — the same table,
+promoted between the two locations **by hand**. No script automates that copy, so `--all` alone
+will not rebuild the Manhattan plot's annotation from scratch. To regenerate it end to end:
 
 ```bash
 quarto render normal2mci_focused/04_gene_dementia_function.qmd --to html   # needs data/upon_request/
@@ -256,7 +240,7 @@ behind every figure is inspectable even where the input data cannot be shared.
 | Directory | Role |
 |---|---|
 | `demographics/` | Cohort tables and baseline characteristics |
-| `dmp/` | Manhattan plot; genomic inflation (standalone) |
+| `dmp/` | Manhattan plot |
 | `validation/` | External validation: ADNI/AIBL, CSF pTau/total Tau, AddNeuroMed |
 | `normal2mci_focused/` | Normal→MCI transition; effect-size correlations |
 | `stable_mci_focused/` | Stable MCI; main and outlier DMP clusters |
@@ -278,9 +262,3 @@ behind every figure is inspectable even where the input data cannot be shared.
 ## Citation
 
 See `CITATION.cff`. Full details on acceptance.
-
-## Contact
-
-Lenore J. Launer — launerl@nia.nih.gov
-Laboratory of Epidemiology and Population Sciences, Intramural Research Program,
-National Institute on Aging, Baltimore, Maryland, USA

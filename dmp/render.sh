@@ -5,8 +5,6 @@
 #   1. Manhattan plot (produces RDS for patch figure)
 #   2. Supplementary patch figure (reads Manhattan RDS)
 #
-# Note: 02_genomic_inflation.qmd is a standalone sensitivity analysis; run it by hand.
-#
 # Usage: bash dmp/render.sh
 
 set -e  # Exit on first error

@@ -1,5 +1,10 @@
 # Python environment for VAE/lite/ (Pipeline B). Pipelines A and C need no Python.
 #
+# Nothing reads this file automatically -- reticulate does not consume it. Build a
+# virtualenv from it and point VAE_VIRTUALENV at that venv (below); otherwise the
+# analysis auto-provisions some other TensorFlow and the fit is not guaranteed to
+# match the published one.
+#
 # The published VAE was trained with these versions on a CUDA 12 GPU.
 #
 #   python3 -m venv ~/.venvs/dementia-vae
