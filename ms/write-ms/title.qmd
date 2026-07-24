@@ -1,22 +1,22 @@
 ---
-title: "Blood DNA methylation traces a continuous epigenetic trajectory across stages of dementia progression"
+title: "Blood DNA methylation traces an epigenetic trajectory across stages of dementia progression"
 ---
 
 
 ### Title
 
-Blood DNA methylation traces a continuous epigenetic trajectory across stages of dementia progression
+Blood DNA methylation traces an epigenetic trajectory across stages of dementia progression
 
 ### Authors
 
-- Zhiguang Li^1,4^
+- Zhiguang Li^1,5^
 - Nigus Asefa^1^
 - Jorge Martinez Romero^1^
 - Osorio Meirelles^1^
 - Djassinabaye Mbangdadji^1^
-- Ann Zenobia Moore^4^
-- Oscar L. Lopez^5^
-- Luigi Ferrucci^4^
+- Oscar L. Lopez^4^
+- Ann Zenobia Moore^5^
+- Luigi Ferrucci^5^
 - Valborg Gudmundsdottir^2,3^
 - Vilmundur Gudnason^2,3^
 - Lenore J. Launer^1^
@@ -26,8 +26,8 @@ Blood DNA methylation traces a continuous epigenetic trajectory across stages of
 1. Laboratory of Epidemiology and Population Sciences, Intramural Research Program, National Institute on Aging, Baltimore, Maryland, United States
 2. Icelandic Heart Association, Kopavogur, Iceland
 3. University of Iceland, Reykjavik, Iceland
-4. Longitudinal Study Section, Translational Gerontology Branch, National Institute on Aging, Baltimore, Maryland, United States
-5. Departments of Neurology and Psychiatry, University of Pittsburgh, Pittsburgh, Pennsylvania, United States
+4. Departments of Neurology and Psychiatry, University of Pittsburgh, Pittsburgh, Pennsylvania, United States
+5. Longitudinal Study Section, Translational Gerontology Branch, National Institute on Aging, Baltimore, Maryland, United States
 
 ### Correspondence
 

@@ -199,6 +199,21 @@ quarto render ms/write-ms/dementia_EWAS.qmd --to typst
 The figure and table documents (`ms/fig_tbl/*.qmd`) embed PNGs from `*/output/`, so they need
 the pipelines to have run.
 
+### Submission PDFs
+
+`render_manuscript.sh --manuscript` stops at the raw Quarto output. `ms/post_process_pdf.sh` is a
+second, driver-less step: it strips the auto front matter, prepends a clean title page and stamps
+continuous page numbers into `ms/submission/` (gitignored). No `render.sh` calls it, so re-run it
+by hand after any prose or float change — pagination shifts:
+
+```bash
+bash ms/render.sh
+bash ms/post_process_pdf.sh
+```
+
+The old baked-in page number is *masked*, not removed, so verify a renumbering from the rendered
+page image; `pdftotext` still shows the stale number in the text layer.
+
 ### One manual link
 
 `normal2mci_focused/04_gene_dementia_function.qmd` is standalone and is the **one manual link in
