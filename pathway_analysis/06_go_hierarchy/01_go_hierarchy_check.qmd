@@ -1,0 +1,458 @@
+---
+title: "GO Hierarchy Check of Transition-Specific Terms"
+subtitle: "Are terms significant in only one group related to terms significant in another? (reviewer R2.9)"
+---
+
+## Overview
+
+Reviewer R2.9 asked whether GO terms reported as unique to one dementia group could be hierarchically related to terms significant in another group. This notebook takes the saved GO biological-process (BP) enrichment results — no enrichment is re-run — reproduces the manuscript's transition-specific terms (adjusted *P* ≤ 0.05 in exactly one group), and uses the GO graph in `GO.db` to test whether any ancestor or descendant of each such term is significant in a different group. It then reports the result for the functional categories the Results and Discussion rely on, and repeats the group-level count at the top 2,000 CpG sites.
+
+Since 2026-10-09 the terms follow the authors' recount: parent terms whose genes are identical to those of a significant child are dropped first (Rule 1, from `03_go_term_weights.qmd`), and the manuscript reports specificity weights based on immediate relatives (Rule 2, same notebook) instead of this any-ancestor-or-descendant check, which stays as the internal record.
+
+## Load packages
+
+`GO.db` supplies the GO BP graph and `readxl` reads the saved functional categories; the tidyverse and `here` are pre-loaded by `.Rprofile`.
+
+```{r}
+#| label: load-packages
+
+pacman::p_load(GO.db, readxl, install = FALSE)
+
+conflicted::conflict_prefer_all("dplyr", quiet = TRUE)
+
+source(here("custom_func/assign_biofunc_category.R"))
+source(here("custom_func/go_term_weights.R"))
+```
+
+## Helper functions
+
+Small helpers that read the significant terms, apply the manuscript's transition-specific definition, walk the GO graph and collect each unique term's significant relatives in other groups.
+
+```{r}
+#| label: helpers
+
+group_levels <- c("normal2mci", "stable_mci", "normal2incid", "mci2incid", "prev")
+
+# Significant GO BP terms per group, as in 03_transition_specific_GO_terms (duplicate parents dropped)
+read_sig_terms <- function(top_n) {
+  read_rds(here(glue("pathway_analysis/02_gene_ontology/output/top{top_n}_all_GO_results.rds"))) |>
+    dplyr::filter(p.adjust <= 0.05, !ID %in% read_go_duplicate_parents(top_n)$parent) |>
+    dplyr::select(condition, ID, Description)
+}
+
+# Manuscript definition: significant in exactly one group, counted by GO ID
+get_unique_terms <- function(sig_terms) {
+  sig_terms |>
+    add_count(ID, name = "n_GO") |>
+    dplyr::filter(n_GO == 1) |>
+    dplyr::select(-n_GO)
+}
+
+# Ancestors of one term by breadth-first walk over GOBPPARENTS, optionally
+# restricted to some edge types ("isa", "part of", "regulates", ...)
+bp_parents <- as.list(GOBPPARENTS)
+
+walk_ancestors <- function(id, relations = NULL) {
+  found <- character()
+  frontier <- id
+  while (length(frontier) > 0) {
+    edges <- unlist(unname(bp_parents[frontier]))
+    if (!is.null(relations)) edges <- edges[names(edges) %in% relations]
+    new_ids <- setdiff(unique(unname(edges)), c(found, "all"))
+    found <- c(found, new_ids)
+    frontier <- new_ids
+  }
+  found
+}
+
+# Direct GO edges (parents or children) of a set of terms, with their edge type
+direct_edges <- function(bimap, term_ids, direction) {
+  as.list(bimap[term_ids]) |>
+    map(\(x) tibble(rel_id = unname(x), relation = names(x))) |>
+    list_rbind(names_to = "term_id") |>
+    dplyr::filter(!is.na(rel_id)) |>
+    mutate(direction = direction)
+}
+
+# Every (unique term, relative) pair in which the relative is an ancestor or
+# descendant of the unique term and is significant in a DIFFERENT group
+find_cross_group_relatives <- function(sig_terms, unique_terms) {
+  term_ids <- unique_terms$ID
+
+  all_relatives <- bind_rows(
+    as.list(GOBPANCESTOR[term_ids]) |>
+      enframe("term_id", "rel_id") |>
+      unnest_longer(rel_id) |>
+      mutate(direction = "ancestor"),
+    as.list(GOBPOFFSPRING[term_ids]) |>
+      enframe("term_id", "rel_id") |>
+      unnest_longer(rel_id) |>
+      mutate(direction = "descendant")
+  ) |>
+    dplyr::filter(!is.na(rel_id), rel_id != "all")
+
+  direct <- bind_rows(
+    direct_edges(GOBPPARENTS, term_ids, "ancestor"),
+    direct_edges(GOBPCHILDREN, term_ids, "descendant")
+  ) |>
+    summarise(
+      relation = str_c(sort(unique(relation)), collapse = "; "),
+      .by = c(term_id, rel_id, direction)
+    )
+
+  strict_ancestors <- unique(sig_terms$ID) |>
+    set_names() |>
+    map(\(id) walk_ancestors(id, relations = c("isa", "part of")))
+
+  all_relatives |>
+    inner_join(
+      unique_terms |>
+        dplyr::rename(term_id = ID, term_condition = condition, term_description = Description),
+      by = "term_id"
+    ) |>
+    inner_join(
+      sig_terms |>
+        dplyr::rename(rel_id = ID, rel_condition = condition, rel_description = Description),
+      by = "rel_id",
+      relationship = "many-to-many"
+    ) |>
+    dplyr::filter(rel_condition != term_condition) |>
+    left_join(direct, by = c("term_id", "rel_id", "direction")) |>
+    mutate(
+      direct = !is.na(relation),
+      isa_partof = map2_lgl(
+        term_id, rel_id,
+        \(t, r) r %in% strict_ancestors[[t]] || t %in% strict_ancestors[[r]]
+      )
+    ) |>
+    dplyr::select(
+      term_condition, term_id, term_description, direction, direct, relation,
+      isa_partof, rel_condition, rel_id, rel_description
+    )
+}
+
+# One row per unique term, flagging the kind of cross-group relative it has
+summarise_terms <- function(unique_terms, relatives) {
+  per_term <- relatives |>
+    summarise(
+      n_relatives = n_distinct(rel_id),
+      has_ancestor = any(direction == "ancestor"),
+      has_descendant = any(direction == "descendant"),
+      has_direct = any(direct),
+      has_isa_partof = any(isa_partof),
+      relative_groups = str_c(sort(unique(rel_condition)), collapse = ", "),
+      relatives = str_c(unique(glue("{rel_description} [{rel_condition}]")), collapse = "; "),
+      .by = term_id
+    )
+
+  unique_terms |>
+    left_join(per_term, by = c(ID = "term_id")) |>
+    mutate(
+      has_relative = !is.na(n_relatives),
+      n_relatives = replace_na(n_relatives, 0L),
+      across(c(has_ancestor, has_descendant, has_direct, has_isa_partof), \(x) replace_na(x, FALSE))
+    )
+}
+
+# Per-group counts plus a total row
+summarise_groups <- function(term_hierarchy, top_n) {
+  by_group <- term_hierarchy |>
+    summarise(
+      n_unique = n(),
+      n_with_relative = sum(has_relative, na.rm = TRUE),
+      n_via_ancestor = sum(has_ancestor, na.rm = TRUE),
+      n_via_descendant = sum(has_descendant, na.rm = TRUE),
+      n_via_direct = sum(has_direct, na.rm = TRUE),
+      n_isa_partof = sum(has_isa_partof, na.rm = TRUE),
+      .by = condition
+    ) |>
+    arrange(factor(condition, levels = group_levels))
+
+  by_group |>
+    bind_rows(
+      by_group |>
+        summarise(across(where(is.numeric), \(x) sum(x, na.rm = TRUE))) |>
+        mutate(condition = "total")
+    ) |>
+    mutate(
+      top_n = top_n,
+      n_without_relative = n_unique - n_with_relative,
+      pct_with_relative = n_with_relative / n_unique,
+      .after = condition
+    ) |>
+    relocate(top_n)
+}
+```
+
+## Reproduce the transition-specific terms
+
+The significant BP terms per group and the unique set are rebuilt from the saved enrichment results with the same rule as `03_transition_specific_GO_terms`, and checked against the counts quoted in the Results and against that step's saved CSV.
+
+```{r}
+#| label: reproduce-top1000
+
+sig_1000 <- read_sig_terms(1000)
+unique_1000 <- get_unique_terms(sig_1000)
+
+sig_counts <- sig_1000 |> count(condition)
+unique_counts <- unique_1000 |> count(condition)
+
+stopifnot(
+  identical(
+    deframe(sig_counts)[group_levels],
+    c(normal2mci = 152L, stable_mci = 12L, normal2incid = 16L, mci2incid = 48L, prev = 22L)
+  ),
+  nrow(unique_1000) == 204,
+  # the manuscript's saved transition-specific set
+  setequal(
+    unique_1000$ID,
+    read_csv(
+      here("pathway_analysis/03_transition_specific_GO_terms/output/top1000_condition_specific_GO_terms.csv"),
+      show_col_types = FALSE
+    )$ID
+  ),
+  # every significant term is in the installed GO graph
+  all(sig_1000$ID %in% keys(GOBPANCESTOR))
+)
+
+sig_counts |>
+  left_join(unique_counts |> dplyr::rename(n_unique = n), by = "condition") |>
+  arrange(factor(condition, levels = group_levels)) |>
+  knitr::kable(caption = "Significant and transition-specific GO BP terms, top 1,000 CpG sites")
+```
+
+The installed GO graph is `GO.db` `r packageVersion("GO.db")`, built from the GO release of `r GO_dbInfo() |> dplyr::filter(name == "GOSOURCEDATE") |> pull(value)`.
+
+## Check the GO graph helpers
+
+The breadth-first walk over all edge types must reproduce `GOBPANCESTOR` exactly, which validates the walker used for the stricter `is_a`/`part_of`-only check. `GOBPANCESTOR` follows `regulates` edges as well, so "regulation of X" counts as related to "X" in the primary analysis.
+
+```{r}
+#| label: check-walker
+
+walker_agrees <- unique(sig_1000$ID) |>
+  map_lgl(\(id) setequal(walk_ancestors(id), setdiff(GOBPANCESTOR[[id]], "all")))
+
+stopifnot(all(walker_agrees))
+
+bp_parents[unique(sig_1000$ID)] |>
+  unname() |>
+  unlist() |>
+  names() |>
+  tibble(relation = _) |>
+  count(relation, name = "n_edges") |>
+  knitr::kable(caption = "Edge types from the significant terms to their direct parents")
+```
+
+## Cross-group hierarchical relatives at top 1,000
+
+For each of the 204 transition-specific terms, all GO ancestors and descendants are looked up and kept only when that relative is significant in a different group.
+
+```{r}
+#| label: relatives-top1000
+
+relatives_1000 <- find_cross_group_relatives(sig_1000, unique_1000)
+
+term_hierarchy_1000 <- summarise_terms(unique_1000, relatives_1000)
+group_summary_1000 <- summarise_groups(term_hierarchy_1000, 1000)
+
+group_summary_1000 |>
+  mutate(pct_with_relative = scales::percent(pct_with_relative, accuracy = 1)) |>
+  knitr::kable(caption = "Transition-specific terms with an ancestor or descendant significant in another group (top 1,000)")
+```
+
+### Which groups the relatives come from
+
+Each unique term is counted once per other group in which it has a significant relative, so a term can appear in more than one column.
+
+```{r}
+#| label: group-crosstab
+
+relatives_1000 |>
+  distinct(term_condition, term_id, rel_condition) |>
+  count(term_condition, rel_condition) |>
+  mutate(
+    term_condition = factor(term_condition, levels = group_levels),
+    rel_condition = factor(rel_condition, levels = group_levels)
+  ) |>
+  arrange(term_condition, rel_condition) |>
+  pivot_wider(names_from = rel_condition, values_from = n, values_fill = 0, names_sort = TRUE) |>
+  knitr::kable(caption = "Unique terms (rows: their group) with a significant relative in each other group (columns)")
+```
+
+### Direct parent/child relatives
+
+These are the pairs in which the relative is an immediate GO parent or child of the unique term, with the edge type joining them.
+
+```{r}
+#| label: direct-pairs
+
+relatives_1000 |>
+  dplyr::filter(direct) |>
+  arrange(factor(term_condition, levels = group_levels), term_description) |>
+  dplyr::select(term_condition, term_description, direction, relation, rel_condition, rel_description) |>
+  knitr::kable(caption = "Unique terms whose direct GO parent or child is significant in another group")
+```
+
+## Functional categories
+
+The functional categories are read from the saved output of `04_function_categorization` and confirmed against `assign_biofunc_category()`; each cross-group relative is categorised with the same function to show whether it would fall in the same category.
+
+```{r}
+#| label: categories
+
+categories_1000 <- read_excel(
+  here("pathway_analysis/04_function_categorization/output/top1000_condition_specific_GO_terms_auto_cat.xlsx")
+)
+
+stopifnot(
+  setequal(categories_1000$ID, unique_1000$ID),
+  identical(assign_biofunc_category(categories_1000$Description), categories_1000$function_category)
+)
+
+same_category_terms <- relatives_1000 |>
+  left_join(categories_1000 |> dplyr::select(ID, function_category), by = c(term_id = "ID")) |>
+  mutate(rel_category = assign_biofunc_category(rel_description)) |>
+  dplyr::filter(coalesce(rel_category == function_category, FALSE)) |>
+  distinct(term_id) |>
+  pull(term_id)
+
+term_hierarchy_1000 <- term_hierarchy_1000 |>
+  left_join(categories_1000 |> dplyr::select(ID, function_category), by = "ID") |>
+  mutate(has_same_category_relative = ID %in% same_category_terms) |>
+  relocate(function_category, .after = Description)
+```
+
+### Categories cited in the Results and Discussion
+
+These are the categories the text describes as specific to one group; the table gives how many of each category's terms have a hierarchical relative significant elsewhere, and how many of those relatives would be assigned to the same category.
+
+```{r}
+#| label: focal-categories
+
+focal_categories <- tribble(
+  ~condition,     ~function_category,
+  "normal2mci",   "Ion Transport and Regulation",
+  "normal2mci",   "Synaptic Function and Organization",
+  "normal2mci",   "Extracellular Matrix Organization",
+  "normal2mci",   "Immune Response",
+  "normal2mci",   "Glial Cell Regulation",
+  "stable_mci",   "Hypoxia Response",
+  "stable_mci",   "Regulatory Mechanisms",
+  "normal2incid", "Synaptic Vesicle Control",
+  "mci2incid",    "Hormone Signaling",
+  "mci2incid",    "Cell Migration and Organization",
+  "prev",         "Cell Cycle Regulation"
+)
+
+focal_category_hierarchy <- focal_categories |>
+  left_join(
+    term_hierarchy_1000 |>
+      summarise(
+        n_terms = n(),
+        n_with_relative = sum(has_relative, na.rm = TRUE),
+        n_via_direct = sum(has_direct, na.rm = TRUE),
+        n_isa_partof = sum(has_isa_partof, na.rm = TRUE),
+        n_same_category_relative = sum(has_same_category_relative, na.rm = TRUE),
+        .by = c(condition, function_category)
+      ),
+    by = c("condition", "function_category")
+  ) |>
+  mutate(n_without_relative = n_terms - n_with_relative, .after = n_with_relative)
+
+stopifnot(
+  identical(
+    focal_category_hierarchy$n_terms,
+    c(13L, 8L, 7L, 7L, 3L, 3L, 2L, 4L, 5L, 7L, 3L)
+  )
+)
+
+focal_category_hierarchy |>
+  knitr::kable(caption = "Focal functional categories: terms with a hierarchical relative significant in another group (top 1,000)")
+```
+
+### Focal-category terms that have a relative elsewhere
+
+The individual terms behind the table above, with their relatives and the group in which each relative is significant.
+
+```{r}
+#| label: focal-terms
+
+term_hierarchy_1000 |>
+  semi_join(focal_categories, by = c("condition", "function_category")) |>
+  dplyr::filter(has_relative) |>
+  arrange(factor(condition, levels = group_levels), function_category, Description) |>
+  dplyr::select(condition, function_category, Description, has_direct, has_same_category_relative, relatives) |>
+  knitr::kable(caption = "Focal-category terms with a significant relative in another group")
+```
+
+## Secondary check at top 2,000
+
+The same group-level count is repeated for the top 2,000 CpG sites; functional categories are not re-examined here.
+
+```{r}
+#| label: top2000
+
+sig_2000 <- read_sig_terms(2000)
+unique_2000 <- get_unique_terms(sig_2000)
+
+stopifnot(
+  setequal(
+    unique_2000$ID,
+    read_csv(
+      here("pathway_analysis/03_transition_specific_GO_terms/output/top2000_condition_specific_GO_terms.csv"),
+      show_col_types = FALSE
+    )$ID
+  ),
+  all(sig_2000$ID %in% keys(GOBPANCESTOR))
+)
+
+relatives_2000 <- find_cross_group_relatives(sig_2000, unique_2000)
+term_hierarchy_2000 <- summarise_terms(unique_2000, relatives_2000)
+group_summary_2000 <- summarise_groups(term_hierarchy_2000, 2000)
+
+sig_2000 |>
+  count(condition) |>
+  left_join(unique_2000 |> count(condition, name = "n_unique"), by = "condition") |>
+  arrange(factor(condition, levels = group_levels)) |>
+  knitr::kable(caption = "Significant and transition-specific GO BP terms, top 2,000 CpG sites")
+
+group_summary_2000 |>
+  mutate(pct_with_relative = scales::percent(pct_with_relative, accuracy = 1)) |>
+  knitr::kable(caption = "Transition-specific terms with an ancestor or descendant significant in another group (top 2,000)")
+```
+
+## Save the results
+
+Tidy tables are saved as `.rds` for the response letter: pair-level relatives and term-level flags at top 1,000, the focal-category table, and the group summaries at both thresholds.
+
+```{r}
+#| label: save
+
+out_dir <- here("pathway_analysis/06_go_hierarchy/output")
+fs::dir_create(out_dir)
+
+write_rds(relatives_1000, fs::path(out_dir, "top1000_unique_term_relatives.rds"))
+write_rds(term_hierarchy_1000, fs::path(out_dir, "top1000_unique_term_hierarchy.rds"))
+write_rds(focal_category_hierarchy, fs::path(out_dir, "top1000_focal_category_hierarchy.rds"))
+write_rds(
+  bind_rows(group_summary_1000, group_summary_2000),
+  fs::path(out_dir, "hierarchy_summary_by_group.rds")
+)
+```
+
+## Summary
+
+The key numbers for the response to R2.9, computed above.
+
+```{r}
+#| label: summary-numbers
+
+total_1000 <- group_summary_1000 |> dplyr::filter(condition == "total")
+total_2000 <- group_summary_2000 |> dplyr::filter(condition == "total")
+n2m_1000 <- group_summary_1000 |> dplyr::filter(condition == "normal2mci")
+```
+
+At the top 1,000 CpG sites, `r total_1000$n_with_relative` of the `r total_1000$n_unique` transition-specific GO BP terms (`r scales::percent(total_1000$pct_with_relative, accuracy = 1)`) had at least one GO ancestor or descendant that was significant in another group, and `r total_1000$n_via_direct` of these had such a relative as a direct parent or child. Restricting the GO graph to `is_a` and `part_of` edges, `r total_1000$n_isa_partof` terms had such a relative. The remaining `r total_1000$n_without_relative` terms had no significant relative in any other group. For normal2mci, `r n2m_1000$n_with_relative` of `r n2m_1000$n_unique` unique terms had a relative elsewhere (`r n2m_1000$n_via_direct` through a direct parent or child).
+
+At the top 2,000 CpG sites, `r total_2000$n_with_relative` of `r total_2000$n_unique` transition-specific terms (`r scales::percent(total_2000$pct_with_relative, accuracy = 1)`) had a significant relative in another group.

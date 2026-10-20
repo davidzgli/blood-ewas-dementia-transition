@@ -76,7 +76,7 @@ fig_sup_stable_mci_extended_transitions <-
   (scatter_extended$mci2incid + theme_main_fig() + theme(legend.position = "none")) +
   (scatter_extended$normal2mci + theme_main_fig() + theme(legend.position = "none")) +
   plot_layout(ncol = 1, guides = "keep", axes = "keep", axis_titles = "collect") +
-  plot_annotation(tag_levels = "a")
+  plot_annotation(tag_levels = "A")
 
 ggsave(here("stable_mci_focused/patch_figures/output/fig_sup_stable_mci_extended_transitions.png"),
        fig_sup_stable_mci_extended_transitions,

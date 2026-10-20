@@ -1,0 +1,622 @@
+---
+title: "Follow-up Time and Restricted DMP Refits"
+subtitle: "Reviewer point R1.4: follow-up time, and short-follow-up controls"
+---
+
+## Overview
+
+Reviewer 1 (point R1.4) asked whether follow-up time should be a covariate, and whether participants classified as dementia-free after only a short follow-up might later have developed dementia. This notebook (1) describes dementia-free follow-up in the three non-dementia groups (stable_normal, normal2mci, stable_mci), including how short follow-up ends and how much of the follow-up variance the group label explains, and (2) refits the 403 DMPs (a) without non-dementia participants who had < 5 years of dementia-free follow-up and (b) with the stable_normal reference restricted to participants who attended AGES-II, comparing each refit with the published estimates.
+
+**Why follow-up time is not entered as a covariate.** Follow-up here ends at incident dementia, death or the end of surveillance, so for the incident groups it is part of the outcome definition and for prevalent dementia it is zero by construction. Adjusting for it would partly condition on the group label itself; restricting the sample is the appropriate test of the reviewer's concern.
+
+```{r}
+#| label: load-packages
+
+# tidyverse, here, janitor and glue are pre-loaded by .Rprofile
+pacman::p_load(haven, rhdf5, broom, install = FALSE)
+
+source(here("custom_func/select_sig_cg.R"))
+
+# Printed P values: three significant digits, and "< 1e-300" where the
+# computation underflowed to zero, so no table prints P = 0
+fmt_p <- function(p) format.pval(p, digits = 3, eps = 1e-300)
+
+# Numbers quoted in prose: fixed decimals with a typographic minus (U+2212),
+# and counts with thousands separators
+fmt <- function(x, digits = 2) str_replace(formatC(x, format = "f", digits = digits), "^-", "\u2212")
+fmt_count <- function(x) formatC(x, format = "d", big.mark = ",")
+```
+
+## Load data
+
+The EWAS analytic sample with its covariates, the follow-up and vital-status variables, and the covariate-adjusted methylation residuals of the 403 DMPs.
+
+### Analytic sample
+
+The EWAS sample of 2,491 participants (2,496 minus 5 with missing smoking status), with the blood cell proportions used in the EWAS model.
+
+```{r}
+#| label: load-covariates
+
+covariates <-
+  read_rds(here("data/collaborator_only/covariates_and_meth_DMP_on_chr21.rds")) |>
+  select(subr_id18, a1age, sex, a1smokingstatus, dementia_ages1_eos) |>
+  dplyr::filter(!is.na(a1smokingstatus)) |>
+  mutate(subr_id18 = as.character(subr_id18))
+
+blood_cells <-
+  read_csv(here("data/collaborator_only/blood_cell_composition.csv"), show_col_types = FALSE) |>
+  dplyr::filter(cohort == "I") |>
+  select(subr_id18, Bcell, CD4T, CD8T, Eos, Mono, Neu) |>
+  mutate(subr_id18 = as.character(subr_id18))
+
+stopifnot(nrow(covariates) == 2491, !anyDuplicated(blood_cells$subr_id18))
+
+levels(covariates$dementia_ages1_eos)
+```
+
+### Follow-up and vital status
+
+Dementia-free follow-up (`time_in_days`, from AGES-I to incident dementia, death or the end of surveillance) and AGES-II attendance come from the dementia-category file. The RAI/cognitive-status file, matched on subject ID, supplies vital status (`died`), the days from AGES-I to death and to the end of surveillance, and the end-of-surveillance date; its own copy of `time_in_days` is used only to check that the two files agree.
+
+```{r}
+#| label: load-followup
+
+dementia_cat <-
+  read_rds(here("data/collaborator_only/covariate_dementia_cat.rds")) |>
+  select(subr_id18, demcat, follow_up_time, time_in_days, in_ages2) |>
+  mutate(subr_id18 = as.character(subr_id18))
+
+vital_status <-
+  read_sas(here("data/collaborator_only/rai_a1a2cogstat2016_jan2017_reva.sas7bdat")) |>
+  clean_names() |>
+  select(
+    subr_id18, rai_time_in_days = time_in_days, died, days_ages_to_eof,
+    days_ages_ic_to_death, most_recent_fup_date
+  ) |>
+  mutate(subr_id18 = as.character(as.numeric(subr_id18)))
+
+stopifnot(!anyDuplicated(dementia_cat$subr_id18), !anyDuplicated(vital_status$subr_id18))
+
+analytic <-
+  covariates |>
+  left_join(blood_cells, by = "subr_id18") |>
+  left_join(dementia_cat, by = "subr_id18") |>
+  left_join(vital_status, by = "subr_id18") |>
+  mutate(
+    followup_years = time_in_days / 365.25,
+    non_dementia = dementia_ages1_eos %in% c("stable_normal", "normal2mci", "stable_mci")
+  )
+
+# The two sources agree on group and on follow-up for every participant
+analytic |> count(dementia_ages1_eos, demcat) |> knitr::kable(format.args = list(big.mark = ","))
+
+stopifnot(
+  !anyNA(analytic$time_in_days),
+  !anyNA(analytic$died),
+  all(analytic$time_in_days == analytic$rai_time_in_days),
+  all(str_remove(as.character(analytic$demcat), "_dementia$") == as.character(analytic$dementia_ages1_eos))
+)
+```
+
+The dementia-category file also carries a `follow_up_time` column. It equals `time_in_days` except in a small group of decedents, where it is half of it; it is not used here.
+
+```{r}
+#| label: check-follow-up-time-column
+
+analytic |>
+  dplyr::filter(follow_up_time != time_in_days) |>
+  summarise(
+    n = n(),
+    all_died = all(died == 1, na.rm = TRUE),
+    median_ratio = median(follow_up_time / time_in_days, na.rm = TRUE),
+    in_ages2 = sum(in_ages2 == 1, na.rm = TRUE),
+    .by = dementia_ages1_eos
+  ) |>
+  knitr::kable(digits = 3, format.args = list(big.mark = ","))
+```
+
+### DMP residuals
+
+The covariate-adjusted M-value residuals (no dementia term) for the 403 DMPs, read from the whole-genome HDF5 file and aligned to the analytic sample by subject ID.
+
+```{r}
+#| label: load-dmp-residuals
+
+h5_path <- here("data/collaborator_only/adjusted_meth_whole_genome.h5")
+h5ls(h5_path) |>
+  mutate(dim = str_replace_all(dim, "\\d+", \(x) formatC(as.numeric(x), format = "d", big.mark = ","))) |>
+  knitr::kable(row.names = FALSE)
+
+base_wide <- read_rds(here("data/upon_request/whole_genome_wide.rds"))
+dmp_base <- select_sig_cg(base_wide, 8) |> select(-n_sig)
+stopifnot(nrow(dmp_base) == 403)
+
+# as.vector(): rhdf5 returns 1-d arrays, whose dim attribute would carry into the rownames
+h5_cpgs <- as.vector(h5read(h5_path, "cpg_names"))
+h5_ids <- as.vector(h5read(h5_path, "subr_id18"))
+dmp_index <- sort(match(dmp_base$cg, h5_cpgs))
+stopifnot(!anyNA(dmp_index))
+
+resid_dmp <- h5read(h5_path, "matrix", index = list(NULL, dmp_index))
+h5closeAll()
+dimnames(resid_dmp) <- list(h5_ids, h5_cpgs[dmp_index])
+
+# Align the analytic sample to the HDF5 row order
+analytic <- analytic[match(h5_ids, analytic$subr_id18), ]
+stopifnot(identical(analytic$subr_id18, rownames(resid_dmp)))
+
+tibble(participants = nrow(resid_dmp), dmp_cpgs = ncol(resid_dmp)) |>
+  knitr::kable(format.args = list(big.mark = ","))
+```
+
+## Follow-up descriptives
+
+How long the dementia-free groups were followed, how short follow-up ended, and how strongly follow-up time is tied to the group label.
+
+### Distribution by group
+
+Dementia-free follow-up in years for all six groups; prevalent dementia is zero by construction and the incident groups end at diagnosis.
+
+```{r}
+#| label: followup-distribution
+
+followup_distribution <-
+  analytic |>
+  summarise(
+    n = n(),
+    min = min(followup_years, na.rm = TRUE),
+    q25 = quantile(followup_years, 0.25, na.rm = TRUE),
+    median = median(followup_years, na.rm = TRUE),
+    q75 = quantile(followup_years, 0.75, na.rm = TRUE),
+    max = max(followup_years, na.rm = TRUE),
+    mean = mean(followup_years, na.rm = TRUE),
+    n_died = sum(died == 1, na.rm = TRUE),
+    n_in_ages2 = sum(in_ages2 == 1, na.rm = TRUE),
+    .by = dementia_ages1_eos
+  ) |>
+  arrange(dementia_ages1_eos)
+
+knitr::kable(followup_distribution, digits = 2, format.args = list(big.mark = ","))
+```
+
+### Short follow-up in the non-dementia groups
+
+Participants with < 5 and < 7 years of dementia-free follow-up, how many of them died, and how many attended AGES-II.
+
+```{r}
+#| label: short-followup
+
+short_followup <-
+  analytic |>
+  dplyr::filter(non_dementia) |>
+  mutate(dementia_ages1_eos = fct_drop(dementia_ages1_eos)) |>
+  summarise(
+    n = n(),
+    n_lt5 = sum(followup_years < 5, na.rm = TRUE),
+    n_lt5_died = sum(followup_years < 5 & died == 1, na.rm = TRUE),
+    n_lt5_in_ages2 = sum(followup_years < 5 & in_ages2 == 1, na.rm = TRUE),
+    n_lt7 = sum(followup_years < 7, na.rm = TRUE),
+    n_lt7_died = sum(followup_years < 7 & died == 1, na.rm = TRUE),
+    n_lt7_in_ages2 = sum(followup_years < 7 & in_ages2 == 1, na.rm = TRUE),
+    .by = dementia_ages1_eos
+  ) |>
+  arrange(dementia_ages1_eos)
+
+short_followup <-
+  bind_rows(
+    short_followup |> mutate(dementia_ages1_eos = as.character(dementia_ages1_eos)),
+    short_followup |> summarise(across(where(is.numeric), \(x) sum(x, na.rm = TRUE))) |>
+      mutate(dementia_ages1_eos = "all_non_dementia")
+  )
+
+knitr::kable(short_followup, format.args = list(big.mark = ","))
+```
+
+### Censoring before the end of surveillance
+
+For the non-dementia groups, follow-up should end at death or at the common end-of-surveillance date; a survivor whose follow-up ends earlier would be censored, and could have developed dementia unobserved.
+
+```{r}
+#| label: censoring-check
+
+censoring_check <-
+  analytic |>
+  dplyr::filter(non_dementia) |>
+  mutate(
+    dementia_ages1_eos = fct_drop(dementia_ages1_eos),
+    end_expected = if_else(died == 1, pmin(days_ages_ic_to_death, days_ages_to_eof), days_ages_to_eof)
+  ) |>
+  summarise(
+    n = n(),
+    n_survivors = sum(died == 0, na.rm = TRUE),
+    n_survivors_censored_early = sum(died == 0 & time_in_days < days_ages_to_eof, na.rm = TRUE),
+    min_survivor_followup_years = min(followup_years[died == 0], na.rm = TRUE),
+    n_followup_ends_at_death_or_eos = sum(time_in_days == end_expected, na.rm = TRUE),
+    end_of_surveillance = max(most_recent_fup_date, na.rm = TRUE),
+    .by = dementia_ages1_eos
+  ) |>
+  arrange(dementia_ages1_eos)
+
+stopifnot(n_distinct(analytic$most_recent_fup_date) == 1)
+
+knitr::kable(censoring_check, digits = 2, format.args = list(big.mark = ","))
+```
+
+### Variance in follow-up explained by group
+
+R² of a linear model of dementia-free follow-up on the dementia group, over all six groups and with prevalent dementia excluded.
+
+```{r}
+#| label: followup-r2
+
+r2_followup <- function(dat) {
+  fit <- lm(followup_years ~ dementia_ages1_eos, data = mutate(dat, dementia_ages1_eos = fct_drop(dementia_ages1_eos)))
+  glance(fit) |> transmute(n = nobs(fit), n_groups = nlevels(fct_drop(dat$dementia_ages1_eos)), r_squared = r.squared, adj_r_squared = adj.r.squared, p_value = p.value)
+}
+
+followup_r2 <-
+  bind_rows(
+    all_six_groups = r2_followup(analytic),
+    excluding_prev = r2_followup(dplyr::filter(analytic, dementia_ages1_eos != "prev")),
+    .id = "sample"
+  )
+
+followup_r2 |>
+  mutate(p_value = fmt_p(p_value)) |>
+  knitr::kable(digits = 3, format.args = list(digits = 3, big.mark = ","))
+```
+
+## Restricted DMP refits
+
+The 403 DMPs are refitted on two restricted samples, using the HDF5 residuals with the covariates re-included (Frisch–Waugh–Lovell), which gives exactly the dementia-group coefficients of the full EWAS model on any subset.
+
+### Model helper
+
+One multivariate `lm()` per sample, with the 403 residual vectors as the response matrix; returns the five dementia-group contrasts versus stable_normal.
+
+```{r}
+#| label: fit-helper
+
+ewas_terms <- c("dementia_ages1_eos", "a1age", "sex", "a1smokingstatus", "Bcell", "CD4T", "CD8T", "Eos", "Mono", "Neu")
+contrast_order <- c("normal2mci", "stable_mci", "normal2incid", "mci2incid", "prev")
+
+fit_dmp <- function(keep) {
+  fit <- lm(reformulate(ewas_terms, response = "y"),
+            data = mutate(analytic[keep, ], y = resid_dmp[keep, ]))
+  tidy(fit) |>
+    dplyr::filter(str_starts(term, "dementia_ages1_eos")) |>
+    transmute(
+      cg = response,
+      contrast = str_remove(term, "dementia_ages1_eos"),
+      estimate,
+      std_error = std.error,
+      nlog10_p = -(log(2) + pt(-abs(statistic), fit$df.residual, log.p = TRUE)) / log(10),
+      n = nobs(fit)
+    )
+}
+```
+
+### Base: full sample, verified against the saved EWAS
+
+The full-sample refit must reproduce the saved genome-wide estimates and *P* values for all 403 × 5 cells before any restricted model is trusted.
+
+```{r}
+#| label: fit-base
+
+keep_base <- rep(TRUE, nrow(analytic))
+fit_base <- fit_dmp(keep_base)
+
+base_long <-
+  dmp_base |>
+  pivot_longer(-cg, names_to = c(".value", "contrast"), names_pattern = "(estimate|nlog10_p_value)_(.*)")
+
+verify_base <-
+  fit_base |>
+  inner_join(base_long, by = c("cg", "contrast")) |>
+  summarise(
+    n_cells = n(),
+    max_abs_diff_estimate = max(abs(estimate.x - estimate.y), na.rm = TRUE),
+    max_abs_diff_nlog10_p = max(abs(nlog10_p - nlog10_p_value), na.rm = TRUE)
+  )
+
+stopifnot(
+  verify_base$n_cells == 403 * 5,
+  verify_base$max_abs_diff_estimate < 1e-10,
+  verify_base$max_abs_diff_nlog10_p < 1e-8
+)
+
+# Differences printed in scientific notation, so a floating-point residue does not round to 0
+verify_base |>
+  mutate(across(starts_with("max_abs_diff"), \(x) formatC(x, format = "e", digits = 1))) |>
+  knitr::kable(format.args = list(big.mark = ","))
+```
+
+### Restricted samples
+
+Setting a drops non-dementia participants (stable_normal, normal2mci, stable_mci) with < 5 years of dementia-free follow-up; setting b keeps only stable_normal participants who attended AGES-II, leaving every other group unchanged.
+
+```{r}
+#| label: fit-restricted
+
+keep_a <- !(analytic$non_dementia & analytic$followup_years < 5)
+keep_b <- analytic$dementia_ages1_eos != "stable_normal" | analytic$in_ages2 == 1
+
+fit_a <- fit_dmp(keep_a)
+fit_b <- fit_dmp(keep_b)
+
+sample_sizes <-
+  bind_rows(
+    base = analytic |> count(dementia_ages1_eos),
+    a_excl_lt5y = analytic[keep_a, ] |> count(dementia_ages1_eos),
+    b_ref_ages2 = analytic[keep_b, ] |> count(dementia_ages1_eos),
+    .id = "setting"
+  ) |>
+  pivot_wider(names_from = setting, values_from = n)
+
+# Setting a removes exactly the short-follow-up stable_mci participants
+n_stable_mci_base <- sample_sizes$base[sample_sizes$dementia_ages1_eos == "stable_mci"]
+n_lt5_stable_mci <- short_followup$n_lt5[short_followup$dementia_ages1_eos == "stable_mci"]
+stopifnot(n_stable_mci_base - sample_sizes$a_excl_lt5y[sample_sizes$dementia_ages1_eos == "stable_mci"] == n_lt5_stable_mci)
+
+knitr::kable(sample_sizes, format.args = list(big.mark = ","))
+```
+
+### Effect-size summary per contrast
+
+Per contrast, over all 403 DMPs and over that contrast's own DMPs (base *P* < 1.0 × 10⁻⁸ in that contrast): median ratio and slope through the origin of the restricted estimates on the base estimates, sign concordance with the base, and the number of CpGs at *P* < 1.0 × 10⁻⁸ and *P* < 1.0 × 10⁻⁵ in each sample.
+
+```{r}
+#| label: effect-summary
+
+dmp_estimates <-
+  bind_rows(base = fit_base, a_excl_lt5y = fit_a, b_ref_ages2 = fit_b, .id = "setting") |>
+  mutate(contrast = factor(contrast, levels = contrast_order))
+
+own_dmps <-
+  base_long |>
+  dplyr::filter(nlog10_p_value >= 8) |>
+  select(cg, own_contrast = contrast)
+
+estimates_wide <-
+  dmp_estimates |>
+  select(setting, cg, contrast, estimate, nlog10_p) |>
+  pivot_wider(names_from = setting, values_from = c(estimate, nlog10_p)) |>
+  left_join(own_dmps, by = "cg", relationship = "many-to-many")
+
+summarise_vs_base <- function(dat, setting) {
+  dat |>
+    rename(est = glue("estimate_{setting}"), nlp = glue("nlog10_p_{setting}")) |>
+    summarise(
+      n_cpg = n(),
+      median_ratio = median(est / estimate_base, na.rm = TRUE),
+      slope = sum(estimate_base * est, na.rm = TRUE) / sum(estimate_base^2, na.rm = TRUE),
+      sign_concordance = mean(sign(est) == sign(estimate_base), na.rm = TRUE),
+      n_p8_base = sum(nlog10_p_base >= 8, na.rm = TRUE),
+      n_p8 = sum(nlp >= 8, na.rm = TRUE),
+      n_p5_base = sum(nlog10_p_base >= 5, na.rm = TRUE),
+      n_p5 = sum(nlp >= 5, na.rm = TRUE),
+      .by = contrast
+    )
+}
+
+all_403 <- estimates_wide |> distinct(cg, contrast, .keep_all = TRUE) |> select(-own_contrast)
+own_only <- estimates_wide |> dplyr::filter(own_contrast == contrast)
+
+effect_summary <-
+  expand_grid(setting = c("a_excl_lt5y", "b_ref_ages2"), dmp_set = c("all_403", "own_dmps")) |>
+  mutate(result = map2(setting, dmp_set, \(s, d) summarise_vs_base(if (d == "all_403") all_403 else own_only, s))) |>
+  unnest(result) |>
+  arrange(setting, dmp_set, contrast)
+
+stopifnot(all(effect_summary$n_cpg[effect_summary$dmp_set == "all_403"] == 403))
+
+knitr::kable(effect_summary, digits = 3, format.args = list(big.mark = ","))
+```
+
+Over all 403 DMPs, a contrast's effects at another contrast's DMPs are often near zero, so per-CpG ratios there are unstable; the slope through the origin is the more reliable summary.
+
+### Spearman correlations with prevalent dementia
+
+The headline correlations of the manuscript (Figure 2A): Spearman correlation between the prevalent-dementia effects and each transition's effects, in each sample, over two CpG sets. `all_403` uses every DMP; `figure_2a` applies the exclusions of the Figure 2A builder (`normal2mci_focused/01_DMP_scatter.qmd`), which drops DMPs with a base mci2incid effect < −0.4 from the mci2incid pair and a base normal2mci effect < −0.3 from the normal2mci pair. The published values (0.87, 0.86, −0.48) are the `figure_2a` base values. The exclusions are taken from the base estimates, so every sample is compared on the same CpGs.
+
+```{r}
+#| label: spearman
+
+figure_2a_excluded <-
+  bind_rows(
+    dmp_base |> dplyr::filter(estimate_mci2incid < -0.4) |> transmute(cg, contrast = "mci2incid"),
+    dmp_base |> dplyr::filter(estimate_normal2mci < -0.3) |> transmute(cg, contrast = "normal2mci")
+  )
+
+prev_pairs <-
+  dmp_estimates |>
+  select(setting, cg, contrast, estimate) |>
+  pivot_wider(names_from = contrast, values_from = estimate) |>
+  pivot_longer(c(normal2incid, mci2incid, normal2mci), names_to = "contrast", values_to = "estimate")
+
+spearman_prev <-
+  bind_rows(
+    all_403 = prev_pairs,
+    figure_2a = prev_pairs |> anti_join(figure_2a_excluded, by = c("cg", "contrast")),
+    .id = "cpg_set"
+  ) |>
+  summarise(
+    n_cpg = n(),
+    rho = cor(prev, estimate, method = "spearman", use = "complete.obs"),
+    p_value = cor.test(prev, estimate, method = "spearman", exact = FALSE)$p.value,
+    .by = c(cpg_set, contrast, setting)
+  ) |>
+  mutate(
+    contrast = factor(contrast, levels = c("normal2incid", "mci2incid", "normal2mci")),
+    setting = factor(setting, levels = c("base", "a_excl_lt5y", "b_ref_ages2"))
+  ) |>
+  arrange(cpg_set, contrast, setting)
+
+# The Figure 2A set reproduces the published values (the saved panel holds 1,198 points)
+published_rho <- spearman_prev |> dplyr::filter(cpg_set == "figure_2a", setting == "base")
+stopifnot(
+  sum(published_rho$n_cpg) == 1198,
+  all(round(published_rho$rho, 2) == c(0.87, 0.86, -0.48))
+)
+
+spearman_prev |>
+  mutate(p_value = fmt_p(p_value)) |>
+  knitr::kable(digits = 3, format.args = list(digits = 3, big.mark = ","))
+```
+
+### Why the estimates move: a shared shift of the reference
+
+Both restrictions remove stable_normal participants, which moves the reference mean and so shifts every contrast by the same per-CpG amount. This checks that the changes are shared across the four contrasts whose own groups neither restriction changes (normal2mci, normal2incid, mci2incid, prev), and whether that common shift runs in the prevalent-dementia direction. If it does, it would add a prev-like component to every contrast, strengthening the positive correlations and diluting the negative normal2mci one.
+
+```{r}
+#| label: reference-shift
+
+untouched <- c("normal2mci", "normal2incid", "mci2incid", "prev")
+
+estimate_change <-
+  dmp_estimates |>
+  select(setting, cg, contrast, estimate) |>
+  pivot_wider(names_from = setting, values_from = estimate) |>
+  pivot_longer(c(a_excl_lt5y, b_ref_ages2), names_to = "setting", values_to = "estimate_new") |>
+  mutate(change = estimate_new - base)
+
+shift_per_cpg <- function(dat) {
+  changes <- dat |> select(cg, contrast, change) |> pivot_wider(names_from = contrast, values_from = change)
+  base_prev <- dat |> dplyr::filter(contrast == "prev") |> select(cg, base_prev = base)
+  common_shift <-
+    changes |>
+    transmute(cg, shift = rowMeans(pick(all_of(untouched)), na.rm = TRUE)) |>
+    left_join(base_prev, by = "cg")
+  pair_r <- cor(select(changes, all_of(untouched)), use = "complete.obs")
+  tibble(
+    min_r_change_untouched = min(pair_r[upper.tri(pair_r)], na.rm = TRUE),
+    r_change_stable_mci_vs_prev = cor(changes$stable_mci, changes$prev, use = "complete.obs"),
+    rho_shift_vs_base_prev = cor(common_shift$shift, common_shift$base_prev, method = "spearman", use = "complete.obs"),
+    sd_shift_over_sd_base_prev = sd(common_shift$shift, na.rm = TRUE) / sd(common_shift$base_prev, na.rm = TRUE)
+  )
+}
+
+reference_shift <-
+  estimate_change |>
+  nest(.by = setting) |>
+  mutate(result = map(data, shift_per_cpg)) |>
+  select(-data) |>
+  unnest(result)
+
+knitr::kable(reference_shift, digits = 3)
+```
+
+### stable_mci DMPs after excluding short follow-up
+
+Setting a removes `r fmt_count(n_lt5_stable_mci)` of the `r fmt_count(n_stable_mci_base)` stable_mci participants, so its stable_mci estimates also reflect who left the group. This shows how the per-CpG ratio is distributed across that contrast's own `r fmt_count(sum(own_dmps$own_contrast == "stable_mci", na.rm = TRUE))` DMPs.
+
+```{r}
+#| label: stable-mci-ratio
+
+stable_mci_ratio <-
+  own_only |>
+  dplyr::filter(contrast == "stable_mci") |>
+  mutate(ratio = estimate_a_excl_lt5y / estimate_base) |>
+  summarise(
+    n_cpg = n(),
+    n_ratio_lt_0.5 = sum(ratio < 0.5, na.rm = TRUE),
+    n_ratio_0.5_to_1 = sum(between(ratio, 0.5, 1), na.rm = TRUE),
+    n_ratio_gt_1 = sum(ratio > 1, na.rm = TRUE),
+    q25_ratio = quantile(ratio, 0.25, na.rm = TRUE),
+    median_ratio = median(ratio, na.rm = TRUE),
+    q75_ratio = quantile(ratio, 0.75, na.rm = TRUE),
+    n_p8_base = sum(nlog10_p_base >= 8, na.rm = TRUE),
+    n_p8_a = sum(nlog10_p_a_excl_lt5y >= 8, na.rm = TRUE)
+  )
+
+knitr::kable(stable_mci_ratio, digits = 3, format.args = list(big.mark = ","))
+```
+
+## Save outputs
+
+The descriptive tables, the per-CpG estimates of all three samples and the comparison tables, as new objects under `dmp/output/`.
+
+```{r}
+#| label: save-outputs
+
+fs::dir_create(here("dmp/output"))
+
+write_rds(followup_distribution, here("dmp/output/followup_restricted_followup_distribution.rds"))
+write_rds(short_followup, here("dmp/output/followup_restricted_short_followup.rds"))
+write_rds(censoring_check, here("dmp/output/followup_restricted_censoring_check.rds"))
+write_rds(followup_r2, here("dmp/output/followup_restricted_followup_r2.rds"))
+write_rds(sample_sizes, here("dmp/output/followup_restricted_sample_sizes.rds"))
+write_rds(dmp_estimates, here("dmp/output/followup_restricted_dmp_estimates.rds"))
+write_rds(effect_summary, here("dmp/output/followup_restricted_effect_summary.rds"))
+write_rds(spearman_prev, here("dmp/output/followup_restricted_spearman_prev.rds"))
+write_rds(reference_shift, here("dmp/output/followup_restricted_reference_shift.rds"))
+write_rds(stable_mci_ratio, here("dmp/output/followup_restricted_stable_mci_ratio.rds"))
+```
+
+## Summary
+
+Findings in one place, for the response to R1.4; every number is computed above.
+
+```{r}
+#| label: summary-values
+
+all_nd <- short_followup |> dplyr::filter(dementia_ages1_eos == "all_non_dementia")
+normal2mci_fu <- followup_distribution |> dplyr::filter(dementia_ages1_eos == "normal2mci")
+
+# The setting-b sentence on normal2mci assumes every one of them attended AGES-II,
+# and that setting a, by contrast, keeps non-attending stable_normal participants
+stopifnot(
+  normal2mci_fu$n_in_ages2 == normal2mci_fu$n,
+  any(keep_a & analytic$dementia_ages1_eos == "stable_normal" & analytic$in_ages2 == 0)
+)
+
+# The R² sentence assumes prevalent dementia has zero follow-up and that five groups remain without it
+stopifnot(
+  all(analytic$followup_years[analytic$dementia_ages1_eos == "prev"] == 0),
+  followup_r2$n_groups[followup_r2$sample == "excluding_prev"] == 5
+)
+
+get_eff <- function(set, ds, ctr, col) {
+  effect_summary |>
+    dplyr::filter(setting == set, dmp_set == ds, contrast == ctr) |>
+    pull({{ col }})
+}
+get_rho <- function(ctr, set, cpgs = "figure_2a") {
+  spearman_prev |>
+    dplyr::filter(cpg_set == cpgs, contrast == ctr, setting == set) |>
+    pull(rho)
+}
+get_r2 <- function(smp) followup_r2 |> dplyr::filter(sample == smp) |> pull(r_squared)
+
+# A lower bound is rounded down, so "r >= x" stays true (the inner round() stops
+# a representation error such as 0.29 * 100 = 28.999... from flooring a digit away)
+fmt_floor <- function(x, digits = 2) fmt(floor(round(x * 10^digits, 6)) / 10^digits, digits)
+
+# Whole percentages, adding decimals only where rounding would print 100% (or 0%)
+# for a value that is not exactly 100% (or 0%): 99.50% prints as 99.5, not 100
+pct <- function(x) {
+  p <- 100 * x
+  digits <- 0
+  shown <- \(d) as.numeric(formatC(p, format = "f", digits = d))
+  while (digits < 10 && ((p < 100 && shown(digits) >= 100) || (p > 0 && shown(digits) <= 0))) {
+    digits <- digits + 1
+  }
+  formatC(p, format = "f", digits = digits)
+}
+sign_range <- function(set) {
+  conc <- effect_summary |>
+    dplyr::filter(setting == set, dmp_set == "all_403") |>
+    pull(sign_concordance)
+  glue("{pct(min(conc, na.rm = TRUE))}–{pct(max(conc, na.rm = TRUE))}%")
+}
+```
+
+- **Short follow-up meant death, not loss to follow-up.** Of `r fmt_count(all_nd$n)` non-dementia participants, `r fmt_count(all_nd$n_lt5)` had < 5 years of dementia-free follow-up (`r fmt_count(all_nd$n_lt5_died)` died; `r fmt_count(all_nd$n_lt5_in_ages2)` attended AGES-II) and `r fmt_count(all_nd$n_lt7)` had < 7 years (`r fmt_count(all_nd$n_lt7_died)` died). Survivors censored before the end of surveillance (`r format(censoring_check$end_of_surveillance[1])`): `r fmt_count(sum(censoring_check$n_survivors_censored_early, na.rm = TRUE))` of `r fmt_count(sum(censoring_check$n_survivors, na.rm = TRUE))`; the shortest follow-up of any survivor was `r fmt_floor(min(censoring_check$min_survivor_followup_years, na.rm = TRUE), 1)` years.
+- **Follow-up is strongly tied to group, mainly through prevalent dementia.** Group explained R² = `r fmt(get_r2("all_six_groups"))` of the variance in follow-up over all six groups, a value driven by prevalent dementia, whose follow-up is zero by construction; among the five groups free of dementia at AGES-I it explained `r fmt(get_r2("excluding_prev"))`.
+- **Setting a (non-dementia < 5 y excluded, n = `r fmt_count(sum(keep_a, na.rm = TRUE))`).** Own-DMP slope through the origin: normal2mci `r fmt(get_eff("a_excl_lt5y", "own_dmps", "normal2mci", slope))`, stable_mci `r fmt(get_eff("a_excl_lt5y", "own_dmps", "stable_mci", slope))`, normal2incid `r fmt(get_eff("a_excl_lt5y", "own_dmps", "normal2incid", slope))`, mci2incid `r fmt(get_eff("a_excl_lt5y", "own_dmps", "mci2incid", slope))`, prev `r fmt(get_eff("a_excl_lt5y", "own_dmps", "prev", slope))`; sign concordance over all 403 DMPs `r sign_range("a_excl_lt5y")`. Prevalent-dementia DMPs at *P* < 1.0 × 10⁻⁸: `r fmt_count(get_eff("a_excl_lt5y", "own_dmps", "prev", n_p8))` of `r fmt_count(get_eff("a_excl_lt5y", "own_dmps", "prev", n_p8_base))`.
+- **Setting b (stable_normal restricted to AGES-II attenders, n = `r fmt_count(sum(keep_b, na.rm = TRUE))`).** Own-DMP slope through the origin: normal2mci `r fmt(get_eff("b_ref_ages2", "own_dmps", "normal2mci", slope))`, stable_mci `r fmt(get_eff("b_ref_ages2", "own_dmps", "stable_mci", slope))`, normal2incid `r fmt(get_eff("b_ref_ages2", "own_dmps", "normal2incid", slope))`, mci2incid `r fmt(get_eff("b_ref_ages2", "own_dmps", "mci2incid", slope))`, prev `r fmt(get_eff("b_ref_ages2", "own_dmps", "prev", slope))`; sign concordance over all 403 DMPs `r sign_range("b_ref_ages2")`. Prevalent-dementia DMPs at *P* < 1.0 × 10⁻⁸: `r fmt_count(get_eff("b_ref_ages2", "own_dmps", "prev", n_p8))` of `r fmt_count(get_eff("b_ref_ages2", "own_dmps", "prev", n_p8_base))`. All `r fmt_count(normal2mci_fu$n)` normal2mci participants attended AGES-II, so setting b compares that group with a reference restricted in the same way. Consistent with this, its negative correlation with prev is weaker there (Spearman ρ `r fmt(get_rho("normal2mci", "base"))` in the full sample, `r fmt(get_rho("normal2mci", "b_ref_ages2"))` in setting b); setting a, which keeps non-attenders in the reference, weakens it as well (`r fmt(get_rho("normal2mci", "a_excl_lt5y"))`), and the shared shift of the reference (see *Why the correlations move*) acts in both settings.
+- **Correlation pattern (Figure 2A CpG set).** Spearman ρ of prev with normal2incid, mci2incid and normal2mci: `r fmt(get_rho("normal2incid", "base"))`, `r fmt(get_rho("mci2incid", "base"))`, `r fmt(get_rho("normal2mci", "base"))` in the full sample; `r fmt(get_rho("normal2incid", "a_excl_lt5y"))`, `r fmt(get_rho("mci2incid", "a_excl_lt5y"))`, `r fmt(get_rho("normal2mci", "a_excl_lt5y"))` in setting a; `r fmt(get_rho("normal2incid", "b_ref_ages2"))`, `r fmt(get_rho("mci2incid", "b_ref_ages2"))`, `r fmt(get_rho("normal2mci", "b_ref_ages2"))` in setting b.
+- **Correlation pattern (all 403 DMPs).** The same three: `r fmt(get_rho("normal2incid", "base", "all_403"))`, `r fmt(get_rho("mci2incid", "base", "all_403"))`, `r fmt(get_rho("normal2mci", "base", "all_403"))` in the full sample; `r fmt(get_rho("normal2incid", "a_excl_lt5y", "all_403"))`, `r fmt(get_rho("mci2incid", "a_excl_lt5y", "all_403"))`, `r fmt(get_rho("normal2mci", "a_excl_lt5y", "all_403"))` in setting a; `r fmt(get_rho("normal2incid", "b_ref_ages2", "all_403"))`, `r fmt(get_rho("mci2incid", "b_ref_ages2", "all_403"))`, `r fmt(get_rho("normal2mci", "b_ref_ages2", "all_403"))` in setting b. The published mci2incid value (0.86) holds only after the Figure 2A exclusions.
+- **Why the correlations move.** Across the four contrasts whose own groups neither restriction changes, the per-CpG changes correlate at r ≥ `r fmt_floor(min(reference_shift$min_r_change_untouched, na.rm = TRUE))`, so each restriction acts as a shift of the reference; setting b leaves stable_mci untouched as well, and its change tracks the prev change there too (r = `r fmt(reference_shift$r_change_stable_mci_vs_prev[reference_shift$setting == "b_ref_ages2"])`). That shift runs in the prevalent-dementia direction (Spearman ρ with the base prev effects `r fmt(reference_shift$rho_shift_vs_base_prev[reference_shift$setting == "a_excl_lt5y"])` in setting a and `r fmt(reference_shift$rho_shift_vs_base_prev[reference_shift$setting == "b_ref_ages2"])` in setting b). The excluded controls' methylation therefore lay in the dementia direction relative to the controls kept: dropping them strengthens the dementia contrasts and dilutes, but does not reverse, the negative normal2mci correlation.
+- **stable_mci in setting a.** Of the `r fmt_count(stable_mci_ratio$n_cpg)` stable_mci DMPs, `r fmt_count(stable_mci_ratio$n_ratio_lt_0.5)` fall below half their base effect and `r fmt_count(stable_mci_ratio$n_ratio_gt_1)` grow once the `r fmt_count(n_lt5_stable_mci)` short-follow-up stable_mci participants are removed; `r fmt_count(stable_mci_ratio$n_p8_a)` stay at *P* < 1.0 × 10⁻⁸. The change is unrelated to the reference shift (r = `r fmt(reference_shift$r_change_stable_mci_vs_prev[reference_shift$setting == "a_excl_lt5y"])` with the prev change), so it reflects which individuals are in this small group.

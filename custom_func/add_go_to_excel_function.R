@@ -40,7 +40,7 @@ add_go_to_excel <- function(wb, df, sheet_name, legend = "SD") {
       vertical = "top",
       wrap_text = TRUE
     ) |>
-    wb_set_row_heights(rows = 1, heights = 100)  # Increased height for longer legend
+    wb_set_row_heights(rows = 1, heights = 380)  # Tall enough for the whole 22-line legend (100 pt clipped it at about 8 lines, 2026-10-07; 240 fitted 16 lines before the specificity columns of 2026-10-09; 340 fitted 20 before the relative counts of 2026-10-13)
   
   # Add data
   wb <- wb |>
@@ -59,8 +59,11 @@ add_go_to_excel <- function(wb, df, sheet_name, legend = "SD") {
   enrichment_cols <- grep("^RichFactor$|^FoldEnrichment$|^zScore$", names(df))
   stat_cols <- grep("^pvalue$|^p.adjust$|^qvalue$", names(df))
   gene_cols <- grep("^geneID$|^Count$", names(df))
-  # New column group for function categorization
-  func_cat_cols <- grep("^transition_specific$|^biofunc_category$", names(df))
+  # New column group for specificity (duplicate parents, weights) and function categorization
+  func_cat_cols <- grep(
+    "^transition_specific$|^duplicate_of$|^n_relatives$|^n_relatives_same_group$|^n_relatives_other_group$|^n_relatives_significant$|^specificity_weight$|^biofunc_category$",
+    names(df)
+  )
   
   # Check if we have function categorization columns
   has_func_cat <- length(func_cat_cols) > 0
@@ -91,7 +94,7 @@ add_go_to_excel <- function(wb, df, sheet_name, legend = "SD") {
   if (has_func_cat) {
     wb <- wb |>
       wb_merge_cells(dims = wb_dims(merged_header_row, func_cat_cols)) |>
-      wb_add_data(x = "Function Categorization",
+      wb_add_data(x = "Specificity and Function Categorization",
                   dims = wb_dims(merged_header_row, func_cat_cols[1]))
   }
   
@@ -153,15 +156,28 @@ add_go_to_excel <- function(wb, df, sheet_name, legend = "SD") {
       ),
       numfmt = "0.000"
     ) |>
-    # Format Count as integer
+    # Format Count and the relative counts as integers
     wb_add_numfmt(
       dims = wb_dims(
         rows = 1:nrow(df),
-        cols = str_which(names(df), "Count"),
+        cols = str_which(names(df), "^Count$|^n_relatives"),
         from_row = data_start_row
       ),
       numfmt = "0"
     )
+
+  # Format the specificity weight to 3 decimal places
+  if ("specificity_weight" %in% names(df)) {
+    wb <- wb |>
+      wb_add_numfmt(
+        dims = wb_dims(
+          rows = 1:nrow(df),
+          cols = str_which(names(df), "^specificity_weight$"),
+          from_row = data_start_row
+        ),
+        numfmt = "0.000"
+      )
+  }
   
   # Borders
   border_col <- wb_color(theme = 1)
@@ -291,13 +307,19 @@ add_go_to_excel <- function(wb, df, sheet_name, legend = "SD") {
   # Add widths for function categorization columns if they exist
   if (has_func_cat) {
     func_cat_widths <- c(
-      15, # transition_specific
-      25  # biofunc_category
+      transition_specific = 15,
+      duplicate_of = 13,
+      n_relatives = 10,
+      n_relatives_same_group = 14,
+      n_relatives_other_group = 14,
+      n_relatives_significant = 14,
+      specificity_weight = 12,
+      biofunc_category = 25
     )
     # Create a vector of all column widths
     all_widths <- numeric(ncol(df))
     all_widths[orig_cols] <- std_widths[1:length(orig_cols)]
-    all_widths[func_cat_cols] <- func_cat_widths[1:length(func_cat_cols)]
+    all_widths[func_cat_cols] <- unname(func_cat_widths[names(df)[func_cat_cols]])
   } else {
     all_widths <- std_widths[1:ncol(df)]
   }

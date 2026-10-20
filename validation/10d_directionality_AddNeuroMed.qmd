@@ -1,12 +1,12 @@
 ---
 title: "Directionality Assessment: AGES vs AddNeuroMed Study"
-params:
-  quartile_cutoff: 0.95
 ---
 
 ## Overview
 
 This analysis assesses whether DNA methylation effect directions are consistent between AGES and the AddNeuroMed cohort using binomial sign tests to evaluate concordance significance.
+
+The input, `es_long_filtered_AddNeuroMed.rds`, is already trimmed once by `05_AddNeuroMed_comparison.qmd` (central 95% of each axis, per comparison), the same data behind the Figure 5B correlations, and it is not trimmed again here. Until the reviewer round (ADJ-D-26-02882, R2.8) this notebook trimmed it a second time, so the submitted Figure 5D used 754–757 CpG sites per comparison instead of 836–837; `11_directionality_trim_check.qmd` documents the difference.
 
 ```{r}
 #| label: load-packages
@@ -26,33 +26,7 @@ source(here("custom_func/display_scientific_notation.R"))
 es_long_filtered <- read_rds(here("validation/output/es_long_filtered_AddNeuroMed.rds"))
 ```
 
-```{r}
-#| label: apply-quartile-filter
-
-# Apply quartile filtering per sub-dataset (addneuromed_comparison + ages_trajectory)
-if (params$quartile_cutoff < 1) {
-  lower_q <- (1 - params$quartile_cutoff) / 2
-  upper_q <- 1 - lower_q
-
-  es_long_filtered <- es_long_filtered |>
-    mutate(
-      x_lower = quantile(ages_effect_size, lower_q, na.rm = TRUE),
-      x_upper = quantile(ages_effect_size, upper_q, na.rm = TRUE),
-      y_lower = quantile(addneuromed_effect_size, lower_q, na.rm = TRUE),
-      y_upper = quantile(addneuromed_effect_size, upper_q, na.rm = TRUE),
-      .by = c(addneuromed_comparison, ages_trajectory)
-    ) |>
-    filter(
-      ages_effect_size >= x_lower & ages_effect_size <= x_upper,
-      addneuromed_effect_size >= y_lower & addneuromed_effect_size <= y_upper
-    ) |>
-    select(-x_lower, -x_upper, -y_lower, -y_upper)
-}
-```
-
 The scatter plots in the main comparison document show that several CpGs have opposing effect directions between AGES and AddNeuroMed. To formally assess whether effect directions are more concordant than expected by chance, we perform binomial sign tests.
-
-**Analysis parameters:** Quartile cutoff = `r params$quartile_cutoff`
 
 ## Prepare Directionality Data
 
@@ -200,12 +174,20 @@ barplot_data <- binomial_results |>
     )
   )
 
+# The "P = 0.05" label starts left of the first (normal2incid, AD) bar and runs over it,
+# so its baseline sits just above that bar; the once-trimmed bar (R2.8) reaches
+# -log10(P) = 2.33, which the former fixed position (2.3) overlapped.
+p_line_label_y <- barplot_data |>
+  dplyr::filter(ages_trajectory == "normal2incid", comparison_label == "AD") |>
+  pull(neg_log10_p) |>
+  max(-log10(0.05), na.rm = TRUE) + 0.3
+
 # Create dodged barplot
 directionality_barplot <- barplot_data |>
   ggplot(aes(x = ages_trajectory, y = neg_log10_p, fill = comparison_label)) +
   geom_col(position = position_dodge(width = 0.8), width = 0.7) +
   geom_hline(yintercept = -log10(0.05), linetype = "dashed", color = "gray50") +
-  annotate("text", x = 0.5, y = -log10(0.01) + 0.3,
+  annotate("text", x = 0.5, y = p_line_label_y, vjust = 0,
            label = "italic(P) == 0.05", hjust = 0, size = 3, color = "gray30", parse = TRUE) +
   scale_fill_brewer(palette = "Dark2") +
   labs(
@@ -238,6 +220,12 @@ ggsave(
 write_rds(
   directionality_barplot,
   here("validation", "output", "fig_directionality_barplot_AddNeuroMed.rds")
+)
+
+# Sign-test table for all fifteen comparison x trajectory combinations (reviewer R2.8)
+write_rds(
+  binomial_results,
+  here("validation", "output", "directionality_results_AddNeuroMed.rds")
 )
 ```
 

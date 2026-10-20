@@ -1,0 +1,85 @@
+---
+title: "Tables for the manuscript"
+format:
+  typst:
+    include-in-header:
+      - text: |
+          // Hide the bare auto-caption Quarto generates from each float's `{#tbl-...}` /
+          // `{#fig-...}` id. Every float in this file has an EMPTY caption, so that caption
+          // renders as the label and nothing else ("Table S1"), directly adjacent to the
+          // hand-written legend paragraph that already opens with the same label. The id
+          // still has to be there -- it is the cross-reference target -- so the caption is
+          // suppressed at render time instead.
+          //
+          // SCOPED TO THIS DOCUMENT ON PURPOSE. Putting this in ms/_metadata.yml would also
+          // blank the manuscript's pseudo-figure pages, and ms/post_process_pdf.sh IDENTIFIES
+          // those pages by matching their bare float labels -- manuscript assembly would fail
+          // outright with "no cross-reference placeholder pages found".
+          //
+          // A document-level include-in-header MERGES with the one in ms/_metadata.yml rather
+          // than replacing it (verified 2026-08-27: the supplement-space rules still fire, so
+          // references read "Table S1", not "Table S 1"). The condition keeps a real caption
+          // rendering if one is ever added.
+          // An "empty" caption is not `[]`: Quarto wraps it, and its repr is
+          // `sequence([ ], block(body: [ ]), [ ])` (dumped from the render on 2026-08-27).
+          // Comparing to `[]` therefore silently never matches and the rule looks broken.
+          #show figure.caption: it => {
+            if repr(it.body).contains("block(body: [ ])") { none } else { it }
+          }
+---
+
+<!-- Supplementary Tables S1-S8. Merged with supplementary_figures.pdf into
+     ms/submission/suppl_figures_tables.pdf by ms/post_process_pdf.sh.
+     2026-10-07 (reviewer round): the submitted Tables S1 (covariates) and S2 (baseline
+     characteristics) were merged into main Table 2, built in ms/fig_tbl/main_tables.qmd, so the
+     tables below renumber from S1. -->
+
+{{< pagebreak >}}
+
+![](/demographics/output/cg12179179_examplar_model.png){#supptbl-exemplar width=50%}
+
+**[@supptbl-exemplar]** | **Example output from genome-wide DNA methylation association analysis.** Representative results from one CpG site (cg12179179) demonstrating the multivariate linear regression model applied systematically across 799,149 CpG sites. The model assessed associations between DNA methylation levels (M-values) and cognitive status transitions while adjusting for age, sex, smoking status, and blood cell-type proportions (B cells, CD4T cells, CD8T cells, eosinophils, monocytes, and neutrophils). [For the categorical terms, the beta coefficients are covariate-adjusted differences in mean M-value relative to the reference category (stable normal cognition for dementia transition, male for sex, and non-smoker for smoking status); for age and the cell-type proportions, they are the change in M-value per unit increase. The dementia-transition coefficients are the effect sizes (ΔM) used throughout.]{.rev} The 95% confidence intervals (CI) and [*P* values]{.rev} indicate statistical significance. This analytical framework was systematically applied to all CpG sites across the genome to identify methylation changes associated with cognitive status transitions.
+
+{{< pagebreak >}}
+
+![](/APOE/output/apoe_dementia_cross_table.png){#supptbl-apoe-dementia}
+
+**[@supptbl-apoe-dementia]** | **Cross-tabulation of APOE genotype and dementia transition category.** Distribution of 2,487 [participants]{.rev} across six APOE genotypes (ε2/ε2, ε2/ε3, ε3/ε3, ε2/ε4, ε3/ε4, ε4/ε4) stratified by dementia transition category. Row percentages are shown in parentheses. The chi-square test indicates a highly significant association between APOE genotype and dementia transition (*P* = 4.18 × 10^−13^).
+
+{{< pagebreak >}}
+
+![](/validation/output/reference_comparison_table.png){#supptbl-reference-comparison}
+
+**[@supptbl-reference-comparison]** | **Comparison of the AGES cohort with published dementia EWAS studies used for [comparison]{.rev}.** Summary of study design, methylation platform, statistical methodology, comparison groups, sample sizes, and [the AGES groups compared]{.rev} for each reference cohort. The ADNI/AIBL meta-analysis investigated Alzheimer's disease (AD) versus cognitively normal (CN) controls. The AddNeuroMed study compared AD versus CN and MCI versus CN groups.
+
+{{< pagebreak >}}
+
+![](/pathway_analysis/05_patch_fig_and_make_table/output/top1000_normal2mci_1_supplementary_table.png){#supptbl-top1000-normal2mci}
+
+**[@supptbl-top1000-normal2mci]** | **Transition-specific Gene Ontology (GO) terms for the normal2mci transition.** GO terms were derived by enrichment analysis of the genes annotated to the top 1,000 CpG sites in the normal2mci transition, categorized by functional domain and sorted by adjusted [*P*]{.rev} from Fisher's one-sided test with Benjamini-Hochberg correction. [Only GO terms significant here (adjusted *P* < 0.05) and in no other group are shown, grouped into broader functional categories to summarize the terms significant only in the normal2mci transition.]{.rev} [Parent terms whose genes are identical to those of a significant child term are omitted (see Methods). The full list of enriched GO terms, with their enrichment statistics and each term's weight, is given in Data S7.]{.rev} Only GO terms in selected functional categories are shown for this transition.
+
+{{< pagebreak >}}
+
+![](/pathway_analysis/05_patch_fig_and_make_table/output/top1000_stable_mci_supplementary_table.png){#supptbl-top1000-stable-mci}
+
+**[@supptbl-top1000-stable-mci]** | **Transition-specific Gene Ontology (GO) terms for the stable MCI (stable_mci) group.** GO terms were derived by enrichment analysis of the genes annotated to the top 1,000 CpG sites in the stable MCI (stable_mci) group, categorized by functional domain and sorted by adjusted [*P*]{.rev} from Fisher's one-sided test with Benjamini-Hochberg correction. [Only GO terms significant here (adjusted *P* < 0.05) and in no other group are shown, grouped into broader functional categories to summarize the terms significant only in the stable MCI (stable_mci) group.]{.rev} [Parent terms whose genes are identical to those of a significant child term are omitted (see Methods). The full list of enriched GO terms, with their enrichment statistics and each term's weight, is given in Data S7.]{.rev}
+
+{{< pagebreak >}}
+
+![](/pathway_analysis/05_patch_fig_and_make_table/output/top1000_normal2incid_supplementary_table.png){#supptbl-top1000-normal2incid}
+
+**[@supptbl-top1000-normal2incid]** | **Transition-specific Gene Ontology (GO) terms for the normal2incid transition.** GO terms were derived by enrichment analysis of the genes annotated to the top 1,000 CpG sites in the normal2incid transition, categorized by functional domain and sorted by adjusted [*P*]{.rev} from Fisher's one-sided test with Benjamini-Hochberg correction. [Only GO terms significant here (adjusted *P* < 0.05) and in no other group are shown, grouped into broader functional categories to summarize the terms significant only in the normal2incid transition.]{.rev} [Parent terms whose genes are identical to those of a significant child term are omitted (see Methods). The full list of enriched GO terms, with their enrichment statistics and each term's weight, is given in Data S7.]{.rev}
+
+{{< pagebreak >}}
+
+![](/pathway_analysis/05_patch_fig_and_make_table/output/top1000_mci2incid_supplementary_table.png){#supptbl-top1000-mci2incid}
+
+**[@supptbl-top1000-mci2incid]** | **Transition-specific Gene Ontology (GO) terms for the mci2incid transition.** GO terms were derived by enrichment analysis of the genes annotated to the top 1,000 CpG sites in the mci2incid transition, categorized by functional domain and sorted by adjusted [*P*]{.rev} from Fisher's one-sided test with Benjamini-Hochberg correction. [Only GO terms significant here (adjusted *P* < 0.05) and in no other group are shown, grouped into broader functional categories to summarize the terms significant only in the mci2incid transition.]{.rev} [Parent terms whose genes are identical to those of a significant child term are omitted (see Methods). The full list of enriched GO terms, with their enrichment statistics and each term's weight, is given in Data S7.]{.rev}
+
+{{< pagebreak >}}
+
+![](/pathway_analysis/05_patch_fig_and_make_table/output/top1000_prev_supplementary_table.png){#supptbl-top1000-prev}
+
+**[@supptbl-top1000-prev]** | **Transition-specific Gene Ontology (GO) terms for the prevalent dementia group.** GO terms were derived by enrichment analysis of the genes annotated to the top 1,000 CpG sites in the prevalent dementia group, categorized by functional domain and sorted by adjusted [*P*]{.rev} from Fisher's one-sided test with Benjamini-Hochberg correction. [Only GO terms significant here (adjusted *P* < 0.05) and in no other group are shown, grouped into broader functional categories to summarize the terms significant only in the prevalent dementia group.]{.rev} [Parent terms whose genes are identical to those of a significant child term are omitted (see Methods). The full list of enriched GO terms, with their enrichment statistics and each term's weight, is given in Data S7.]{.rev}
+
+{{< pagebreak >}}

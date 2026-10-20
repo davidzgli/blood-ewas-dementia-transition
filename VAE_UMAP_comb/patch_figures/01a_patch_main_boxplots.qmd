@@ -1,5 +1,5 @@
 ---
-title: "Patch main figure — boxplots (panels a–d)"
+title: "Patch main figure — boxplots (panels A–D)"
 ---
 
 ```{r}
@@ -40,7 +40,7 @@ set_pub_geom_defaults()
 
 ```{r}
 
-# Panel c: the three near-monotonic VAE dimensions named in the narrative (vae_6, vae_2, vae_4),
+# Panel C: the three near-monotonic VAE dimensions named in the narrative (vae_6, vae_2, vae_4),
 # stacked in a single column so the panel is tall and narrow. Derive them from the top-3 ANOVA
 # ranks and assert their identity -- vae_N is not a stable axis across fits, so a hardcoded subset
 # would silently show the wrong dimensions on a retrain.
@@ -127,7 +127,7 @@ fig_vae_boxplots <-
   free(panel_d) +
   plot_layout(design = layout, guides = "auto", axes = "keep", axis_titles = "keep",
               widths = c(1, 1, 1, 1, 1, 1, 1, 1, 1.5, 1.5)) +
-  plot_annotation(tag_levels = "a")
+  plot_annotation(tag_levels = "A")
 
 fig_vae_boxplots
 

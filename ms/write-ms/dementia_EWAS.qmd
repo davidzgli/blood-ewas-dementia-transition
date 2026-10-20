@@ -1,5 +1,5 @@
 ---
-title: "Blood DNA methylation traces a continuous epigenetic trajectory across stages of dementia progression"
+title: "Blood DNA methylation traces an epigenetic trajectory across stages of dementia"
 format:
   typst:
     include-in-header:
@@ -30,6 +30,12 @@ format:
 
 {{< pagebreak >}}
 
+## Methods
+
+{{< include methods.qmd >}}
+
+{{< pagebreak >}}
+
 ## Results
 
 {{< include results.qmd >}}
@@ -42,14 +48,35 @@ format:
 
 {{< pagebreak >}}
 
-## Methods
-
-{{< include methods.qmd >}}
-
-{{< pagebreak >}}
-
 {{< include other_infor.qmd >}}
 
 {{< pagebreak >}}
 
 {{< include ../fig_tbl/_pseudo_figures.qmd >}}
+
+::: {.content-visible when-format="docx"}
+
+{{< pagebreak >}}
+
+## Bibliography
+
+:::
+
+::: {#refs}
+:::
+
+{{< pagebreak >}}
+
+## Figure Legends
+
+{{< include ../fig_tbl/_legends/fig-1.qmd >}}
+
+{{< include ../fig_tbl/_legends/fig-2.qmd >}}
+
+{{< include ../fig_tbl/_legends/fig-3.qmd >}}
+
+{{< include ../fig_tbl/_legends/fig-4.qmd >}}
+
+{{< include ../fig_tbl/_legends/fig-5.qmd >}}
+
+{{< include ../fig_tbl/_legends/fig-6.qmd >}}

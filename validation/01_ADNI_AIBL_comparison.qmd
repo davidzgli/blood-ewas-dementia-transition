@@ -24,6 +24,8 @@ fs::dir_create(here("validation/output"))
 #| echo: false
 
 source(here("custom_func/display_scientific_notation.R"))
+source(here("custom_func/p_value_label.R"))
+source(here("custom_func/r_value_label.R"))
 ```
 
 ## Introduction
@@ -172,8 +174,8 @@ facet_correlations <- facet_data |>
     cor_estimate = map_dbl(cor_test, ~.$estimate),
     cor_pval = map_dbl(cor_test, ~.$p.value),
     # Parsed expression labels for italic r and P
-    cor_estimate_label = glue("italic(r) == ~{round(cor_estimate, 2)}"),
-    cor_pval_label = glue("italic(P) == ~{display_scientific_notation(cor_pval)}")
+    cor_estimate_label = r_value_label(cor_estimate),
+    cor_pval_label = p_value_label(cor_pval)
   ) |>
   select(-cor_test) |>
   mutate(

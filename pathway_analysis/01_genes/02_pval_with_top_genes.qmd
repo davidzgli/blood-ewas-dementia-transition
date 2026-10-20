@@ -126,7 +126,7 @@ plot_pval_with_top_genes <- sig_cpg_rank |>
   # Add text annotation for p-value threshold
   annotate("label", x = 1200, y = 8,
         #    label = "1.0 %*% 10^{-8}~(threshold)",
-           label = "1.0 %*% 10^{-8}",
+           label = '"1.0 \u00d7 "*10^-8',  # quoted, or plotmath prints "1"
            parse = TRUE,
            hjust = 0,
            vjust = 0.5,
@@ -139,7 +139,7 @@ plot_pval_with_top_genes <- sig_cpg_rank |>
   facet_wrap(~demcat, ncol = 3, scales = "free_y") +
   scale_y_continuous(expand = expansion(mult = c(0.05, 0.15))) +
   scale_x_continuous(expand = expansion(mult = c(0.1, 0.1))) +
-  labs(x = "Top gene number", y = "-log10(p-value)")
+  labs(x = "Top gene number", y = expression(-log[10]~italic(P)))
 
 plot_pval_with_top_genes
 ```

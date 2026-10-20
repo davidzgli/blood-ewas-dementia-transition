@@ -66,7 +66,7 @@ manh_plot <-
   annotate("segment", x = min(manh_tbl_reduced$x_axis_order), xend = max(manh_tbl_reduced$x_axis_order), y = 8, yend = 8, color = "darkred", linewidth = 0.6, linetype = "dashed") +
   annotate("label", x = 3000000, y = 8,
   # annotate("label", x = max(manh_tbl_reduced$x_axis_order) + 10000, y = 8,
-           label = "1.0 %*% 10^{-8}~(threshold)",
+           label = '"1.0 \u00d7 "*10^-8~(threshold)',  # quoted, or plotmath prints "1"
           #  label = "1.0 %*% 10^{-8}",
            parse = TRUE,
            size = 4,
@@ -201,7 +201,7 @@ manh_plot +
                 inherit.aes = FALSE) +
   # Expand the y axis
   scale_x_continuous(name = NULL, label = axis_set$chr, breaks = axis_set$x_axis_order, expand = expansion(mult = c(0.01, 0.01))) +
-  scale_y_continuous(name = "-log10(p-value)", limits = c(0, 55), breaks = seq(0, 20, 5)) +
+  scale_y_continuous(name = expression(-log[10]~italic(P)), limits = c(0, 55), breaks = seq(0, 20, 5)) +
   guides(fill = guide_legend(title = "Dementia Transition", override.aes = list(size = 3, shape = 21)), color = "none") +
   theme_minimal() +
   theme( 

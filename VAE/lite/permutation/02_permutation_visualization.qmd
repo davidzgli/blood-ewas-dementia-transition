@@ -116,9 +116,17 @@ hist_plots <- THRESHOLDS |>
   set_names() |>
   map(\(t) {
     td <- threshold_data[[as.character(t)]]
+    # Permutation P values are printed at the resolution of the 1,000 permutations (three
+    # decimals), and as the bound "< 0.001" when none reached the observed DPS (R1.5); the P is
+    # bold italic, as in the house style (custom_func/p_value_label.R)
+    stopifnot(all(pvalues$n_permutations == 1000))
     pval_data <- pvalues |>
       filter(threshold == t) |>
-      mutate(label = glue("p = {sprintf('%.3f', p_value)}"))
+      mutate(label = if_else(
+        n_perm_gte == 0,
+        'bolditalic(P)~bold("< 0.001")',
+        as.character(glue('bolditalic(P)~bold("= {sprintf("%.3f", p_value)}")'))
+      ))
 
     obs_data <- td$obs_dps |>
       mutate(dim_pair = glue("{dimx} vs {dimy}"))
@@ -137,7 +145,7 @@ hist_plots <- THRESHOLDS |>
         data = pval_data,
         aes(label = label),
         x = Inf, y = Inf, hjust = 1.1, vjust = 1.5,
-        size = 3, color = "red", fontface = "bold",
+        size = 3, color = "red", parse = TRUE,
         inherit.aes = FALSE
       ) +
       facet_wrap(~dim_pair, scales = "free_x", ncol = 5) +

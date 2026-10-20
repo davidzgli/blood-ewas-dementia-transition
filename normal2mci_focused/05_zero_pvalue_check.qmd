@@ -1,0 +1,848 @@
+---
+title: "Zero P-value check"
+subtitle: "Recomputing the correlation and permutation P-values printed as 0 (reviewers R1.5 and R2.7)"
+---
+
+## Overview
+
+Reviewers R1.5 and R2.7 objected to correlations reported as *P* = 0. This notebook finds every correlation *P*-value printed as 0 in the submitted manuscript figures (Figure 1A–D, Figures S2–S8, Figure 5B) and in the Results text (`ms/write-ms/results.qmd`, lines 34 and 37). It recomputes each one from the saved output objects and flags the ones that really underflow double precision. It also lists the permutation *P* = 0 cells in Figures S19 and S20.
+
+The authors decided to replace each zero with its computed value and to write "*P* < 1.0 × 10^-300^" only where that value underflows. No producer is re-rendered here; every number comes from a saved `.rds` object, or for Figure S6 from the producer's own input passed through the same helpers.
+
+Which cells printed 0 is worked out from the recomputed *P*-values with the rule each submitted figure used to print them (a default `cor.test()` *P* of exactly 0, or a value that rounds to 0 at three decimals in the stable_mci and permutation labels), and the labels in the saved plots serve only as a cross-check, so the table stays the same once the figures are relabelled and no longer print 0.
+
+```{r}
+#| label: load-packages
+#| echo: false
+
+# tidyverse, here and glue are pre-loaded by .Rprofile
+pacman::p_load(gt, install = FALSE)
+```
+
+## Helpers
+
+Three shared producer helpers are sourced read-only, and local helpers compute and format the *P*-values and read the *P* out of the layer that prints it. `spearman_p()` runs `cor.test()` with its default settings and again with `exact = FALSE`, then takes log~10~ *P* straight from the *t* approximation so the magnitude stays finite when the *P*-value itself underflows.
+
+```{r}
+#| label: helpers
+
+# Shared producer helpers (read-only): the figure label formatter and the DMP builders
+source(here("custom_func/display_scientific_notation.R"))
+source(here("custom_func/select_sig_cg.R"))
+source(here("custom_func/build_dmp_long_effect_size.R"))
+
+quiet_cor_test <- purrr::quietly(cor.test)
+
+# Spearman correlation with the P-value computed three ways
+spearman_p <- function(x, y) {
+  keep <- complete.cases(x, y)
+  x <- x[keep]
+  y <- y[keep]
+  n <- length(x)
+
+  default <- quiet_cor_test(x, y, method = "spearman")
+  asymptotic <- quiet_cor_test(x, y, method = "spearman", exact = FALSE)
+  has_ties <- length(default$warnings) > 0
+
+  r <- unname(default$result$estimate)
+  t_stat <- r * sqrt((n - 2) / (1 - r^2))
+
+  tibble(
+    n = n,
+    r = r,
+    p_default = default$result$p.value,
+    # cor.test() takes the AS 89 path when n <= 1290 and there are no ties
+    # (pspearman() inside stats:::cor.test.default tests `n <= 1290 && exact`)
+    default_method = if (n <= 1290 && !has_ties) "AS 89 Edgeworth series" else "t approximation",
+    p_exact_false = asymptotic$result$p.value,
+    log10_p = (log(2) + pt(-abs(t_stat), df = n - 2, log.p = TRUE)) / log(10),
+    underflow = p_exact_false == 0
+  )
+}
+
+# Format a P-value from its log10 for the response letter
+format_p <- function(log10_p, underflow) {
+  exponent <- floor(log10_p)
+  mantissa <- round(10^(log10_p - exponent), 2)
+  rollover <- mantissa >= 10
+  mantissa <- if_else(rollover, mantissa / 10, mantissa)
+  exponent <- if_else(rollover, exponent + 1, exponent)
+
+  case_when(
+    underflow ~ "< 1.0 × 10^-300",
+    log10_p >= -3 ~ as.character(signif(10^log10_p, 3)),
+    .default = as.character(glue("{sprintf('%.2f', mantissa)} × 10^{exponent}"))
+  )
+}
+
+# A P label printed as 0 or 0.000 (P == ~0, p==0, p=0, p = 0.000)
+zero_pattern <- "[Pp]\\)?\\s*(==|=)\\s*~?\\s*\"?0(\\.0+)?\"?\\s*($|\\)|;|,)"
+
+# The P text of a printed label: "italic(P) == ~0" gives "0", "r=0.55; p=0.395" gives "0.395"
+# Quotes are dropped first: since 2026-10-07 the plotmath labels quote their numbers ('"2.50"')
+# so plotmath keeps trailing zeros, and a quoted zero must still be caught.
+label_p <- function(label) str_match(str_remove_all(label, '"'), "[Pp]\\)?\\s*==?\\s*~?\\s*([^;,]*?)\\)?\\s*$")[, 2]
+
+# The data of the one layer that prints `label_col`, resolved as ggplot does
+# (a layer without its own data inherits the plot's), so a label is read from the layer that prints it
+printed_label_data <- function(plot, label_col) {
+  layer <- purrr::keep(plot$layers, \(l) !is.null(l$mapping$label) && rlang::as_label(l$mapping$label) == label_col)
+  stopifnot(length(layer) == 1)
+  layer[[1]]$layer_data(plot$data)
+}
+```
+
+## Why the printed P-value is 0
+
+This section shows why the submitted figures printed 0. With its default settings, `cor.test(method = "spearman")` picks the *P*-value method from the number of pairs n (`pspearman()` in `stats:::cor.test.default`, R `r getRversion()`):
+
+- n ≤ 1,290: exact AS 89 series;
+- n > 1,290: *t* approximation (ties also force the *t* approximation at any n).
+
+```{r}
+#| label: demo-as89
+
+# Figure 1A, prevalent dementia vs normal2incid (the r = 0.87 quoted on Results line 34)
+demo_data <-
+  read_rds(here("normal2mci_focused/output/scatter_DMP_suppl.rds"))$prev$data |>
+  dplyr::filter(demcat == "normal2incid")
+
+demo <- spearman_p(demo_data$prev, demo_data$normal2incid)
+demo
+```
+
+At these sample sizes the "exact" path is the AS 89 Edgeworth-series approximation. Far out in the tail the series goes negative and R truncates it to 0. The *t* approximation returns 0 only when the value is below the smallest double (about 4.9 × 10^-324^).
+
+With these `r demo$n` DMPs, the default call returns exactly `r demo$p_default`, while the *t* approximation gives a *P*-value of about 10^`r round(demo$log10_p)`^. That is about `r round(demo$log10_p - log10(.Machine$double.xmin * .Machine$double.eps))` orders of magnitude above the smallest representable double. So, at least for n ≤ 1,290, the legend wording "*P* = 0 denotes *P*-values that exceed double-precision floating-point limits" is incorrect.
+
+## Figure 1A–B and Figure S2
+
+These panels show genome-wide DMP scatter plots (*P* < 1.0 × 10^-8^) against one reference transition. Each correlation is recomputed from the saved plot data, and `p_printed` is rebuilt with the submitted producer's own formatter.
+
+```{r}
+#| label: dmp-scatter
+
+# The display filters in 01_DMP_scatter.qmd run before cor.test(), so the saved plot data is
+# exactly the correlation subset; the main and supplementary objects carry identical data
+scatter_dmp_main <- read_rds(here("normal2mci_focused/output/scatter_DMP_main.rds"))
+scatter_dmp_suppl <- read_rds(here("normal2mci_focused/output/scatter_DMP_suppl.rds"))
+stopifnot(all(map2_lgl(scatter_dmp_main, scatter_dmp_suppl, \(a, b) identical(a$data, b$data))))
+
+dmp_panels <- tribble(
+  ~figure,     ~object,        ~x_transition,
+  "Figure 1A", "prev",         "prev",
+  "Figure 1B", "mci2incid",    "mci2incid",
+  "Figure S2", "normal2incid", "normal2incid"
+)
+
+# Kept outside mutate() so the outer quosure never captures .data[[x_col]]
+cor_dmp_panel <- function(obj, x_col) {
+  plot <- scatter_dmp_suppl[[obj]]
+  # The stored P label, read from the layer that prints it (for the cross-check only)
+  printed <- printed_label_data(plot, "cor_pval_label") |> distinct(demcat, cor_pval_label)
+
+  plot$data |>
+    reframe(.by = c(demcat, cor_estimate), spearman_p(.data[[x_col]], es)) |>
+    left_join(printed, by = "demcat", relationship = "one-to-one")
+}
+
+dmp_cor <-
+  dmp_panels |>
+  mutate(stats = map2(object, x_transition, cor_dmp_panel)) |>
+  unnest(stats)
+
+# The recomputation must reproduce the plotted r exactly (the printed P is cross-checked below)
+stopifnot(all(abs(dmp_cor$r - dmp_cor$cor_estimate) < 1e-12))
+
+dmp_cor <-
+  dmp_cor |>
+  transmute(
+    figure, x_transition, y_transition = as.character(demcat), threshold = "8",
+    stable_mci_grp = NA_character_, n, r,
+    # The submitted producer printed display_scientific_notation() of the default P, which gives
+    # "0" exactly when P is 0; it formats one P at a time, so format element-wise here too
+    p_printed = map_chr(p_default, display_scientific_notation),
+    p_default, default_method, p_exact_false, log10_p, underflow,
+    source_object = as.character(glue("normal2mci_focused/output/scatter_DMP_{{main,suppl}}.rds${object}")),
+    label_source = "normal2mci_focused/output/scatter_DMP_suppl.rds",
+    label_now = as.character(cor_pval_label), p_stored = NA_real_
+  )
+```
+
+## Figure 1C–D and Figures S3–S4
+
+These panels show the extended-DMP scatter plots at thresholds 5–7. At thresholds 5 and 6 the CpG count exceeds 1,290, so `cor.test()` switches to the *t* approximation, and that is where the real underflows appear.
+
+```{r}
+#| label: extended-scatter
+
+# The outlier filters in 02_Extended_DMP_scatter.qmd also run before cor.test()
+scatter_ext_main <- read_rds(here("normal2mci_focused/output/scatter_extended_DMP_main.rds"))
+scatter_ext_suppl <- read_rds(here("normal2mci_focused/output/scatter_extended_DMP_suppl.rds"))
+stopifnot(all(map2_lgl(
+  scatter_ext_main, scatter_ext_suppl,
+  \(a, b) identical(select(a$data, -Threshold), select(b$data, -Threshold))
+)))
+
+ext_panels <- tribble(
+  ~figure,      ~object,                      ~x_transition,  ~y_transition,
+  "Figure 1C",  "normal2incid_vs_prev",       "prev",         "normal2incid",
+  "Figure 1D",  "normal2mci_vs_prev",         "prev",         "normal2mci",
+  "Figure S3A", "mci2incid_vs_normal2incid",  "normal2incid", "mci2incid",
+  "Figure S3B", "normal2mci_vs_normal2incid", "normal2incid", "normal2mci",
+  "Figure S4A", "prev_vs_mci2incid",          "mci2incid",    "prev",
+  "Figure S4B", "normal2mci_vs_mci2incid",    "mci2incid",    "normal2mci"
+)
+
+# The x/y columns above must match the saved plot's own aesthetic mapping
+stopifnot(all(pmap_lgl(ext_panels, \(object, x_transition, y_transition, ...) {
+  mapping <- scatter_ext_suppl[[object]]$mapping
+  str_detect(rlang::as_label(mapping$x), fixed(x_transition)) &&
+    str_detect(rlang::as_label(mapping$y), fixed(y_transition))
+})))
+
+cor_ext_panel <- function(obj, x_col, y_col) {
+  plot <- scatter_ext_suppl[[obj]]
+  printed <-
+    printed_label_data(plot, "cor_pval_label") |>
+    distinct(threshold = str_extract(Threshold, "^\\d+"), cor_pval_label)
+
+  plot$data |>
+    mutate(threshold = str_extract(Threshold, "^\\d+")) |>
+    reframe(
+      .by = c(threshold, n_cg, cor_estimate),
+      spearman_p(.data[[x_col]], .data[[y_col]])
+    ) |>
+    left_join(printed, by = "threshold", relationship = "one-to-one")
+}
+
+ext_cor <-
+  ext_panels |>
+  mutate(stats = pmap(list(object, x_transition, y_transition), cor_ext_panel)) |>
+  unnest(stats)
+
+stopifnot(
+  all(ext_cor$n == ext_cor$n_cg),
+  all(abs(ext_cor$r - ext_cor$cor_estimate) < 1e-12)
+)
+
+ext_cor <-
+  ext_cor |>
+  transmute(
+    figure, x_transition, y_transition, threshold,
+    stable_mci_grp = NA_character_, n, r,
+    p_printed = map_chr(p_default, display_scientific_notation),
+    p_default, default_method, p_exact_false, log10_p, underflow,
+    source_object = as.character(glue("normal2mci_focused/output/scatter_extended_DMP_{{main,suppl}}.rds${object}")),
+    label_source = "normal2mci_focused/output/scatter_extended_DMP_suppl.rds",
+    label_now = as.character(cor_pval_label), p_stored = NA_real_
+  )
+```
+
+## Figures S6–S8 (stable_mci)
+
+The stable_mci producers compute the correlation separately for the main and outlier groups and print `round(p, 3)`, so any *P* < 0.0005 reads as 0; `p_printed` is rebuilt the same way from the default *P*. The saved Figure S6 plot lacks a few correlated points, so its correlation set is rebuilt from the producer's input and checked against the *r* stored in the plot.
+
+```{r}
+#| label: stable-mci-dmp
+
+# stable_mci_focused/01_DMP_scatter.qmd applies its outlier filters after cor.test(), so the
+# correlation set is rebuilt from the producer's input with the producer's own helpers
+dmp_long <-
+  read_rds(here("data/upon_request/annotated_asso_wide.rds")) |>
+  select_sig_cg(8) |>
+  build_dmp_long_effect_size()
+
+stable_mci_dmp_plot <- read_rds(here("stable_mci_focused/output/scatter_DMP.rds"))
+stable_mci_dmp_saved <- stable_mci_dmp_plot$data
+
+stable_mci_dmp_cor <-
+  dmp_long |>
+  dplyr::filter(demcat != "stable_mci") |>
+  reframe(.by = c(demcat, stable_mci_grp), spearman_p(stable_mci, es)) |>
+  left_join(
+    # The stored r, P and label, read from the layer that prints the label
+    printed_label_data(stable_mci_dmp_plot, "label") |>
+      distinct(demcat = as.character(demcat), stable_mci_grp, cor, pval, label),
+    by = c("demcat", "stable_mci_grp"),
+    relationship = "one-to-one"
+  )
+
+stopifnot(
+  nrow(stable_mci_dmp_cor) == 8,
+  n_distinct(dmp_long$cg, na.rm = TRUE) == 403,
+  # The saved plot points are a subset of the rebuilt correlation set
+  nrow(anti_join(mutate(stable_mci_dmp_saved, demcat = as.character(demcat)), dmp_long, by = c("cg", "demcat"))) == 0,
+  all(abs(stable_mci_dmp_cor$r - stable_mci_dmp_cor$cor) < 1e-12)
+)
+
+stable_mci_dmp_cor <-
+  stable_mci_dmp_cor |>
+  transmute(
+    figure = "Figure S6", x_transition = "stable_mci", y_transition = demcat, threshold = "8",
+    stable_mci_grp, n, r, p_printed = as.character(round(p_default, 3)),
+    p_default, default_method, p_exact_false, log10_p, underflow,
+    source_object = "stable_mci_focused/output/scatter_DMP.rds (correlation set rebuilt from data/upon_request/annotated_asso_wide.rds)",
+    label_source = "stable_mci_focused/output/scatter_DMP.rds",
+    label_now = as.character(label), p_stored = pval
+  )
+```
+
+The extended stable_mci panels apply their single filter (prevalent dementia only) before `cor.test()`, so the saved plot data is the correlation subset.
+
+```{r}
+#| label: stable-mci-extended
+
+scatter_stable_ext <- read_rds(here("stable_mci_focused/output/scatter_extended.rds"))
+
+stable_ext_panels <- tribble(
+  ~figure,      ~object,
+  "Figure S7",  "prev",
+  "Figure S8A", "normal2incid",
+  "Figure S8B", "mci2incid",
+  "Figure S8C", "normal2mci"
+)
+
+cor_stable_ext_panel <- function(obj) {
+  plot <- scatter_stable_ext[[obj]]
+  printed <-
+    printed_label_data(plot, "cor_label") |>
+    distinct(threshold = str_extract(pval_cutoff, "^\\d+"), stable_mci_grp, cor_pval, cor_label)
+
+  plot$data |>
+    mutate(threshold = str_extract(pval_cutoff, "^\\d+")) |>
+    reframe(
+      .by = c(threshold, stable_mci_grp, cor),
+      spearman_p(stable_mci, .data[[obj]])
+    ) |>
+    left_join(printed, by = c("threshold", "stable_mci_grp"), relationship = "one-to-one")
+}
+
+stable_ext_cor <-
+  stable_ext_panels |>
+  mutate(stats = map(object, cor_stable_ext_panel)) |>
+  unnest(stats)
+
+stopifnot(all(abs(stable_ext_cor$r - stable_ext_cor$cor) < 1e-12))
+
+stable_ext_cor <-
+  stable_ext_cor |>
+  transmute(
+    figure, x_transition = "stable_mci", y_transition = object, threshold,
+    stable_mci_grp, n, r, p_printed = as.character(round(p_default, 3)),
+    p_default, default_method, p_exact_false, log10_p, underflow,
+    source_object = as.character(glue("stable_mci_focused/output/scatter_extended.rds${object}")),
+    label_source = "stable_mci_focused/output/scatter_extended.rds",
+    label_now = as.character(cor_label), p_stored = cor_pval
+  )
+```
+
+## Figure 5B (AddNeuroMed)
+
+Figure 5B is built from the saved quantile-filtered long table, restricted to the three key AGES groups and the two AddNeuroMed comparisons against controls. The recomputed *r* is checked against the *r* label layer stored in the saved plot, and the printed *P* is rebuilt with `display_scientific_notation()` as in the producer.
+
+```{r}
+#| label: addneuromed
+
+addneuromed_long <- read_rds(here("validation/output/es_long_filtered_AddNeuroMed.rds"))
+fig5b_saved <- read_rds(here("validation/output/fig_validation_AddNeuroMed_scatter_two_key.rds"))
+
+# r and P are printed by two label layers with their own data; read each from the layer that prints it
+fig5b_labels <-
+  printed_label_data(fig5b_saved, "cor_estimate_label") |>
+  select(addneuromed_comparison, ages_trajectory, cor_estimate) |>
+  left_join(
+    printed_label_data(fig5b_saved, "cor_pval_label") |>
+      select(addneuromed_comparison, ages_trajectory, cor_pval, cor_pval_label),
+    by = c("addneuromed_comparison", "ages_trajectory"),
+    relationship = "one-to-one"
+  )
+
+addneuromed_cor <-
+  addneuromed_long |>
+  dplyr::filter(
+    ages_trajectory %in% c("normal2incid", "mci2incid", "prev"),
+    addneuromed_comparison %in% c("MCI vs CN", "AD vs CN")
+  ) |>
+  reframe(
+    .by = c(addneuromed_comparison, ages_trajectory),
+    spearman_p(ages_effect_size, addneuromed_effect_size)
+  ) |>
+  left_join(
+    fig5b_labels |> select(addneuromed_comparison, ages_trajectory, cor_estimate, cor_pval, cor_pval_label),
+    by = c("addneuromed_comparison", "ages_trajectory")
+  )
+
+stopifnot(
+  nrow(addneuromed_cor) == 6,
+  all(abs(addneuromed_cor$r - addneuromed_cor$cor_estimate) < 1e-12)
+)
+
+addneuromed_cor <-
+  addneuromed_cor |>
+  transmute(
+    figure = "Figure 5B", x_transition = as.character(ages_trajectory),
+    y_transition = as.character(glue("AddNeuroMed {addneuromed_comparison}")), threshold = "AddNeuroMed top 1,000",
+    stable_mci_grp = NA_character_, n, r,
+    p_printed = map_chr(p_default, display_scientific_notation),
+    p_default, default_method, p_exact_false, log10_p, underflow,
+    source_object = "validation/output/es_long_filtered_AddNeuroMed.rds",
+    label_source = "validation/output/fig_validation_AddNeuroMed_scatter_two_key.rds",
+    label_now = as.character(cor_pval_label), p_stored = cor_pval
+  )
+```
+
+## Correlation table
+
+Stack all recomputed correlations, flag the ones printed as 0, and format the replacement value. `printed_zero` comes from the rebuilt `p_printed`, so it depends only on the data.
+
+```{r}
+#| label: combine-correlations
+
+cor_table <-
+  bind_rows(dmp_cor, ext_cor, stable_mci_dmp_cor, stable_ext_cor, addneuromed_cor) |>
+  mutate(
+    test = "Spearman",
+    # Derived from the recomputed P, not read from the saved labels
+    printed_zero = p_printed == "0",
+    zero_cause = case_when(
+      !printed_zero ~ NA_character_,
+      underflow ~ "double-precision underflow",
+      p_default == 0 ~ "AS 89 Edgeworth series truncated to 0",
+      .default = "label rounded to 3 decimals"
+    ),
+    p_report = format_p(log10_p, underflow),
+    # Where P is representable, exact = FALSE and the log-scale t tail must agree
+    agree = underflow | abs(log10(p_exact_false) - log10_p) < 1e-6
+  )
+
+stopifnot(
+  all(cor_table$agree),
+  !any(cor_table$underflow & cor_table$p_exact_false > 0),
+  # default_method names the branch cor.test() really took: the t-approximation rows are exactly
+  # the rows where the default and exact = FALSE P-values coincide (the n <= 1290 switch, row by row)
+  all((cor_table$default_method == "t approximation") == (cor_table$p_default == cor_table$p_exact_false))
+)
+
+# No row sits at n = 1290, so the n <= 1290 rule and the older n < 1290 wording classify every row the same way
+stopifnot(!any(cor_table$n == 1290))
+
+cor_table |>
+  mutate(n_le_1290 = n <= 1290, n_lt_1290 = n < 1290) |>
+  summarise(
+    .by = c(default_method, n_le_1290, n_lt_1290),
+    rows = n(), min_n = min(n, na.rm = TRUE), max_n = max(n, na.rm = TRUE)
+  )
+```
+
+## Results text values
+
+Results lines 34 and 37 of the submitted text quote the Figure 1A and Figure S6 (main group) correlations with *P* = 0. `text_ref` always names the as-submitted line, and `text_state` reports whether the current `results.qmd` still prints each value as *P* = 0 on that line, prints it on another line, or no longer prints it.
+
+```{r}
+#| label: text-values
+#| warning: true
+
+results_lines <- read_lines(here("ms/write-ms/results.qmd"))
+
+text_refs <- tribble(
+  ~text_ref,          ~figure,     ~y_transition,  ~stable_mci_grp, ~r_text,
+  "results.qmd:34",   "Figure 1A", "normal2incid", NA,              "0.87",
+  "results.qmd:34",   "Figure 1A", "mci2incid",    NA,              "0.86",
+  "results.qmd:34",   "Figure 1A", "normal2mci",   NA,              "-0.48",
+  "results.qmd:37",   "Figure S6", "prev",         "main",          "0.68",
+  "results.qmd:37",   "Figure S6", "normal2incid", "main",          "0.71",
+  "results.qmd:37",   "Figure S6", "mci2incid",    "main",          "0.63",
+  "results.qmd:37",   "Figure S6", "normal2mci",   "main",          "-0.43"
+)
+
+text_values <-
+  text_refs |>
+  left_join(cor_table, by = c("figure", "y_transition", "stable_mci_grp"))
+
+# "*r* = 0.87, *P* = 0" as submitted, but not "*P* = 0.05"
+text_zero_regex <- \(r_txt) paste0(str_escape(glue("*r* = {r_txt}, *P* = 0")), "(?![.\\d])")
+
+text_values <-
+  text_values |>
+  mutate(
+    line_no = as.integer(str_extract(text_ref, "\\d+$")),
+    on_line = map2_lgl(line_no, r_text, \(i, r_txt) coalesce(str_detect(results_lines[i], text_zero_regex(r_txt)), FALSE)),
+    # Every line of the current text that still prints this value as P = 0
+    lines_now = map_chr(r_text, \(r_txt) str_flatten_comma(as.character(which(str_detect(results_lines, text_zero_regex(r_txt)))))),
+    text_state = case_when(on_line ~ "as submitted", lines_now == "" ~ "revised", .default = "moved")
+  )
+
+stopifnot(
+  nrow(text_values) == nrow(text_refs),
+  all(sprintf("%.2f", text_values$r) == text_values$r_text)
+)
+
+# A value still printed as P = 0 on another line is expected only partway through the text
+# revision (lines inserted above it before its P = 0 is replaced), so it warns instead of stopping;
+# the chunk sets warning: true so the warning is shown in the rendered page
+moved_values <- dplyr::filter(text_values, text_state == "moved")
+if (nrow(moved_values) > 0) {
+  warning(
+    "Results values still printed as P = 0 away from their as-submitted line: ",
+    str_flatten_comma(glue("r = {moved_values$r_text} ({moved_values$text_ref}, now line {moved_values$lines_now})")),
+    call. = FALSE
+  )
+}
+
+text_values |>
+  select(text_ref, figure, y_transition, r = r_text, n, p_report, text_state, lines_now) |>
+  knitr::kable()
+
+# Line 37 also states the outlier group is uncorrelated (|r| <= 0.21, P >= 0.11)
+outlier_check <-
+  cor_table |>
+  dplyr::filter(figure == "Figure S6", stable_mci_grp == "outlier") |>
+  summarise(max_abs_r = max(abs(r), na.rm = TRUE), min_p_default = min(p_default, na.rm = TRUE), min_p_exact_false = min(p_exact_false, na.rm = TRUE))
+
+outlier_check
+```
+
+Of the `r nrow(text_values)` text references, `r sum(text_values$text_state == "as submitted", na.rm = TRUE)` still print *P* = 0 on their as-submitted line, `r sum(text_values$text_state == "revised", na.rm = TRUE)` no longer print *P* = 0 and `r sum(text_values$text_state == "moved", na.rm = TRUE)` print it on another line. A moved value only raises a warning, because `text_ref` documents the submitted text and the saved table does not depend on the current one.
+
+Under either method, line 37's outlier-group claim still holds: max |*r*| = `r sprintf("%.3f", outlier_check$max_abs_r)`, and min *P* = `r sprintf("%.3f", outlier_check$min_p_default)` with the default method or `r sprintf("%.3f", outlier_check$min_p_exact_false)` with `exact = FALSE`.
+
+## Permutation P = 0 cells (Figures S19 and S20)
+
+The permutation *P*-value is `n_perm_gte / n_permutations`, so 0 means none of the 1,000 permuted DPS values reached the observed one. Figures S19 and S20 printed it with `sprintf("%.3f")`, which with 1,000 permutations gives 0.000 exactly when `n_perm_gte` is 0, so the zero cells are selected on `n_perm_gte`.
+
+```{r}
+#| label: permutation
+
+# Figure S18 (VAE null distributions, THR8) has no zero cell; Figure S19 (UMAP, THR8) prints
+# "p = 0.000" and Figure S20 (heatmap over all four method-threshold columns) prints "0.000"
+perm_pvalues <-
+  read_rds(here("VAE_UMAP_comb/output/pvalues_all.rds")) |>
+  mutate(across(where(is.character), as.character))
+
+null_dist_labels <-
+  c(S18 = "VAE", S19 = "UMAP") |>
+  imap(\(method, fig) {
+    plot <- read_rds(here(glue("{method}/lite/permutation/output/fig_tbl/threshold_8/fig_null_distribution_path2d.rds")))
+    printed_label_data(plot, "label") |>
+      transmute(
+        figure = paste("Figure", fig), method, threshold = 8,
+        dimx = as.character(dimx), dimy = as.character(dimy), n_perm_gte, n_permutations, p_value,
+        label = as.character(label)
+      )
+  }) |>
+  list_rbind()
+
+# The largest permuted DPS for each cell, from the permutation draws
+perm_max <-
+  c(7, 8) |>
+  map(\(th) {
+    read_rds(here(glue("UMAP/lite/output/permutation_dps_threshold_{th}.rds"))) |>
+      mutate(across(c(dimx, dimy), as.character)) |>
+      summarise(.by = c(dimx, dimy), max_perm_dps = max(path2d_dps, na.rm = TRUE)) |>
+      mutate(threshold = th)
+  }) |>
+  list_rbind()
+
+perm_zero <-
+  bind_rows(
+    null_dist_labels |>
+      dplyr::filter(n_perm_gte == 0) |>
+      left_join(
+        perm_pvalues |> select(method, threshold, dimx, dimy, observed, dim_pair_label),
+        by = c("method", "threshold", "dimx", "dimy")
+      ),
+    perm_pvalues |>
+      dplyr::filter(n_perm_gte == 0) |>
+      mutate(figure = "Figure S20", label = sprintf("%.3f", p_value)) |>
+      select(figure, method, threshold, dimx, dimy, n_perm_gte, n_permutations, p_value, label, observed, dim_pair_label)
+  ) |>
+  left_join(perm_max, by = c("threshold", "dimx", "dimy"))
+
+stopifnot(
+  !any(null_dist_labels$method == "VAE" & null_dist_labels$n_perm_gte == 0),
+  all(perm_zero$method == "UMAP"),
+  all(perm_zero$n_permutations == 1000),
+  all(perm_zero$observed > perm_zero$max_perm_dps),
+  # Selecting n_perm_gte == 0 is the same as selecting the cells sprintf("%.3f") printed as 0.000
+  all(sprintf("%.3f", perm_zero$p_value) == "0.000"),
+  !any(perm_pvalues$n_perm_gte > 0 & sprintf("%.3f", perm_pvalues$p_value) == "0.000"),
+  !any(null_dist_labels$n_perm_gte > 0 & sprintf("%.3f", null_dist_labels$p_value) == "0.000")
+)
+
+perm_table <-
+  perm_zero |>
+  transmute(
+    figure, x_transition = paste(method, dim_pair_label), y_transition = paste(dimx, "vs", dimy),
+    threshold = as.character(threshold), stable_mci_grp = NA_character_,
+    test = "Permutation (DPS)", n = n_permutations, r = observed,
+    # The submitted labels: "p = 0.000" in the null-distribution panel, "0.000" in the heatmap
+    p_printed = if_else(
+      figure == "Figure S20",
+      sprintf("%.3f", p_value),
+      as.character(glue("p = {sprintf('%.3f', p_value)}"))
+    ),
+    p_default = p_value, default_method = "n_perm_gte / n_permutations",
+    p_exact_false = NA_real_, log10_p = NA_real_,
+    underflow = FALSE, printed_zero = TRUE, zero_cause = "0 of 1,000 permutations reached the observed DPS",
+    p_report = as.character(glue(
+      "< 0.001 (0 of {scales::comma(n_permutations)} permuted DPS >= observed {sprintf('%.3f', observed)}; ",
+      "max permuted {sprintf('%.3f', max_perm_dps)}; (b + 1)/(m + 1) = {signif(1 / (n_permutations + 1), 3)})"
+    )),
+    source_object = if_else(figure == "Figure S20", "VAE_UMAP_comb/output/pvalues_all.rds", "UMAP/lite/permutation/output/fig_tbl/threshold_8/fig_null_distribution_path2d.rds"),
+    # Figure S20 formats its numbers inside aes(), so it stores no label to cross-check
+    label_source = if_else(figure == "Figure S20", NA_character_, source_object),
+    label_now = if_else(figure == "Figure S20", NA_character_, label),
+    p_stored = NA_real_
+  )
+
+perm_table |>
+  select(figure, x_transition, threshold, n, r, p_printed, p_report) |>
+  knitr::kable(digits = 3)
+```
+
+For permutation rows, `r` holds the observed DPS and `n` the number of permutations. `p_report` also gives the (b + 1)/(m + 1) estimate, 1/1,001.
+
+## Cross-check against the printed labels
+
+This section compares the derived zero set with the *P* labels stored in the saved plot objects. Each object must be either "as submitted", with the printed zeros exactly the derived ones, or "relabelled", with no label printing 0.
+
+```{r}
+#| label: label-cross-check
+
+# "As submitted": every label prints the rebuilt p_printed and any stored numeric P equals the
+# default cor.test() value. "Relabelled": no label prints 0. Anything else stops the render.
+# Figure S20 stores no label and is not checked here.
+label_check <-
+  bind_rows(cor_table, perm_table) |>
+  dplyr::filter(!is.na(label_source)) |>
+  mutate(
+    p_now = label_p(label_now),
+    zero_now = str_detect(label_now, zero_pattern),
+    as_submitted = coalesce(p_now == str_remove(p_printed, "^p = "), FALSE) & coalesce(p_stored == p_default, TRUE)
+  )
+
+label_state <-
+  label_check |>
+  summarise(
+    .by = label_source,
+    n_cells = n(),
+    n_zero_derived = sum(printed_zero, na.rm = TRUE),
+    n_zero_printed = sum(zero_now, na.rm = TRUE),
+    n_as_submitted = sum(as_submitted, na.rm = TRUE)
+  ) |>
+  mutate(state = case_when(
+    n_as_submitted == n_cells ~ "as submitted",
+    n_zero_printed == 0 ~ "relabelled",
+    .default = "inconsistent"
+  ))
+
+submitted_cells <- label_check |> dplyr::filter(label_source %in% label_state$label_source[label_state$state == "as submitted"])
+
+stopifnot(
+  !any(is.na(label_check$label_now)),
+  all(label_state$state != "inconsistent"),
+  # As submitted, the printed zeros are exactly the derived zero set
+  identical(submitted_cells$zero_now, submitted_cells$printed_zero)
+)
+
+knitr::kable(label_state)
+```
+
+All `r nrow(label_check)` labelled cells in `r nrow(label_state)` objects were checked: `r sum(label_state$state == "as submitted", na.rm = TRUE)` objects are as submitted and `r sum(label_state$state == "relabelled", na.rm = TRUE)` relabelled.
+
+## Completeness sweep
+
+This section checks that no other manuscript figure prints a zero *P*-value, by searching every text label in the saved plot objects behind Figures 2–6 and S10–S24. The six label objects cross-checked above serve as controls.
+
+```{r}
+#| label: sweep
+
+collect_labels <- function(x) {
+  if (inherits(x, "patchwork")) {
+    base <- x
+    class(base) <- setdiff(class(base), "patchwork")
+    return(c(unlist(map(x$patches$plots, collect_labels)), collect_labels(base)))
+  }
+  if (inherits(x, "ggplot")) {
+    layer_labels <- map(x$layers, \(l) {
+      d <- l$data
+      from_data <- if (is.data.frame(d)) unlist(map(select(d, contains("label")), as.character)) else character()
+      c(from_data, as.character(l$aes_params$label))
+    })
+    plot_labels <- if (is.data.frame(x$data)) unlist(map(select(x$data, contains("label")), as.character)) else character()
+    return(c(unlist(layer_labels), plot_labels))
+  }
+  if (is.list(x)) return(unlist(map(x, collect_labels)))
+  character()
+}
+
+# Controls: the six label objects cross-checked above (Figures 1, 5B, S2-S4, S6-S8 and S19)
+sweep_controls <- tribble(
+  ~object,                                                                              ~label_source,
+  "normal2mci_focused/output/scatter_DMP_main.rds",                                     "normal2mci_focused/output/scatter_DMP_suppl.rds",
+  "normal2mci_focused/output/scatter_extended_DMP_main.rds",                            "normal2mci_focused/output/scatter_extended_DMP_suppl.rds",
+  "stable_mci_focused/output/scatter_DMP.rds",                                          "stable_mci_focused/output/scatter_DMP.rds",
+  "stable_mci_focused/output/scatter_extended.rds",                                     "stable_mci_focused/output/scatter_extended.rds",
+  "validation/output/fig_validation_AddNeuroMed_scatter_two_key.rds",                   "validation/output/fig_validation_AddNeuroMed_scatter_two_key.rds",
+  "UMAP/lite/permutation/output/fig_tbl/threshold_8/fig_null_distribution_path2d.rds", "UMAP/lite/permutation/output/fig_tbl/threshold_8/fig_null_distribution_path2d.rds"
+)
+
+# Every control must map to a cross-checked label object
+stopifnot(setequal(sweep_controls$label_source, label_state$label_source))
+
+sweep_objects <- c(
+  # Controls (cross-checked above); the main DMP objects carry the same data as the suppl ones
+  sweep_controls$object,
+  # Figure S18: VAE permutation null distributions
+  "VAE/lite/permutation/output/fig_tbl/threshold_8/fig_null_distribution_path2d.rds",
+  # Figures 2 and S10-S14: latent-dimension boxplots
+  "VAE/lite/latent_coordinates/output/fig_tbl/boxplot_list_threshold_8.rds",
+  "VAE/lite/latent_coordinates/output/fig_tbl/boxplot_list_threshold_7.rds",
+  "UMAP/lite/latent_coordinates/output/fig_tbl/boxplot_list_threshold_8.rds",
+  "UMAP/lite/latent_coordinates/output/fig_tbl/boxplot_list_threshold_7.rds",
+  # Figures 3 and S15-S17: scatter and peak plots
+  "VAE/lite/scatter/output/fig_tbl/threshold8/scatter_rank01.rds",
+  "VAE/lite/scatter/output/fig_tbl/threshold8/scatter_rank02.rds",
+  "UMAP/lite/scatter/output/fig_tbl/threshold8/scatter_rank01.rds",
+  "UMAP/lite/scatter/output/fig_tbl/threshold8/scatter_rank02.rds",
+  "VAE_UMAP_comb/output/fig_dps_line.rds",
+  # Figures 4 and S21: APOE boxplots
+  "APOE/output/apoe_boxplot_thr8_combined.rds",
+  "APOE/output/apoe_boxplot_thr7_combined.rds",
+  # Figure 5A, C, D
+  "validation/output/fig_validation_ADNI_AIBL_scatter_three_transitions_p4.5_p4.0.rds",
+  "validation/output/fig_directionality_ADNI_AIBL_only.rds",
+  "validation/output/fig_directionality_barplot_AddNeuroMed.rds",
+  # Figures 6 and S22-S24: pathway analysis
+  "pathway_analysis/01_genes/output/pval_with_top_genes_plot.rds",
+  "pathway_analysis/04_function_categorization/output/top1000_barplot_function_category.rds",
+  "pathway_analysis/04_function_categorization/output/top2000_barplot_function_category.rds"
+)
+
+sweep <-
+  tibble(object = sweep_objects) |>
+  mutate(
+    labels = map(object, \(f) unique(collect_labels(read_rds(here(f))))),
+    n_labels = map_int(labels, length),
+    zero_labels = map_chr(labels, \(l) str_flatten(str_subset(l, zero_pattern), " | ")),
+    n_zero = map_int(labels, \(l) sum(str_detect(l, zero_pattern), na.rm = TRUE))
+  ) |>
+  select(-labels) |>
+  left_join(sweep_controls, by = "object") |>
+  left_join(label_state |> select(label_source, n_zero_derived, state), by = "label_source") |>
+  # A control prints a zero only while it is as submitted; every other object never does
+  mutate(expect_zero = coalesce(state == "as submitted" & n_zero_derived > 0, FALSE))
+
+stopifnot(
+  nrow(sweep) == length(sweep_objects),
+  all((sweep$n_zero > 0) == sweep$expect_zero)
+)
+
+sweep |>
+  select(object, n_labels, n_zero, state) |>
+  mutate(state = coalesce(state, "not a control")) |>
+  knitr::kable()
+```
+
+`r sum(sweep$n_zero > 0, na.rm = TRUE)` of the `r nrow(sweep_controls)` controls print a zero label, as their cross-check state requires, and none of the other `r nrow(sweep) - nrow(sweep_controls)` figure objects has any. The Figure S20 heatmap formats its numbers inside `aes()`, so it cannot be swept this way; it is covered by the permutation section above.
+
+## Save the table
+
+Save one tidy table holding every Spearman correlation in the affected panels (zero and non-zero), the Results text references and the permutation zero cells. The cross-check columns are dropped, so the saved table does not change when the figures are relabelled.
+
+```{r}
+#| label: save
+
+zero_pvalue_table <-
+  bind_rows(cor_table, perm_table) |>
+  select(-c(agree, label_source, label_now, p_stored)) |>
+  left_join(
+    text_refs |> select(text_ref, figure, y_transition, stable_mci_grp),
+    by = c("figure", "y_transition", "stable_mci_grp")
+  ) |>
+  relocate(test, .after = figure) |>
+  relocate(printed_zero, zero_cause, p_report, text_ref, .after = p_printed)
+
+fs::dir_create(here("normal2mci_focused/output"))
+write_rds(zero_pvalue_table, here("normal2mci_focused/output/zero_pvalue_table.rds"))
+
+glimpse(zero_pvalue_table)
+```
+
+## Replacement values
+
+This table lists every *P*-value printed as 0, with the value to report in its place. For correlations, the replacement is the asymptotic *t*-approximation *P* (`exact = FALSE`), which is the method `cor.test()` already uses for n > 1,290.
+
+```{r}
+#| label: replacements
+
+zero_pvalue_table |>
+  dplyr::filter(printed_zero) |>
+  mutate(
+    comparison = if_else(
+      test == "Spearman",
+      glue("{x_transition} vs {y_transition}{if_else(is.na(stable_mci_grp), '', paste0(' (', stable_mci_grp, ')'))}"),
+      x_transition
+    ),
+    log10_p = round(log10_p, 1),
+    text_ref = replace_na(text_ref, "")
+  ) |>
+  select(figure, comparison, threshold, n, r, zero_cause, log10_p, p_report, text_ref) |>
+  gt(groupname_col = "figure") |>
+  fmt_number(r, decimals = 3) |>
+  fmt_integer(n) |>
+  sub_missing(missing_text = "") |>
+  cols_label(
+    comparison = "Comparison", threshold = "Threshold", r = "r / observed DPS",
+    zero_cause = "Why it printed 0", log10_p = "log10 P (t approx.)",
+    p_report = "Report as", text_ref = "Text"
+  ) |>
+  tab_options(table.font.size = px(11), row_group.font.weight = "bold")
+```
+
+## Summary
+
+The counts below summarise the zeros by figure and cause.
+
+```{r}
+#| label: summary-counts
+
+zero_rows <- zero_pvalue_table |> dplyr::filter(printed_zero)
+
+zero_rows |>
+  count(test, zero_cause, name = "n_zero") |>
+  knitr::kable()
+
+zero_rows |>
+  count(figure, zero_cause) |>
+  pivot_wider(names_from = zero_cause, values_from = n, values_fill = 0) |>
+  knitr::kable()
+
+spearman_zero <- zero_rows |> dplyr::filter(test == "Spearman")
+underflow_rows <- spearman_zero |> dplyr::filter(underflow)
+representable_rows <- spearman_zero |> dplyr::filter(!underflow)
+n_cause <- \(cause) sum(spearman_zero$zero_cause == cause, na.rm = TRUE)
+
+# Name the largest and smallest representable zeros from the table, with a markdown superscript
+describe_zero <- function(row) {
+  p_md <- str_replace(row$p_report, "10\\^(-?\\d+)$", "10^\\1^")
+  group <- if (is.na(row$stable_mci_grp)) "" else paste0(", ", row$stable_mci_grp, " group")
+  glue("{p_md} ({row$figure}, {row$x_transition} vs {row$y_transition}{group}, threshold {row$threshold})")
+}
+largest_zero <- representable_rows |> slice_max(log10_p, n = 1, with_ties = FALSE)
+smallest_zero <- representable_rows |> slice_min(log10_p, n = 1, with_ties = FALSE)
+
+# Non-zero labels from the AS 89 path, compared with the t approximation
+as89_nonzero <-
+  zero_pvalue_table |>
+  dplyr::filter(test == "Spearman", !printed_zero, default_method == "AS 89 Edgeworth series", p_default < 0.001)
+as89_ratio <- range(as89_nonzero$p_default / as89_nonzero$p_exact_false, na.rm = TRUE)
+```
+
+- The submitted figures printed `r nrow(spearman_zero)` Spearman *P*-values as 0, and the permutation figures printed `r nrow(perm_table)` cells as 0.
+- `r nrow(underflow_rows)` of the Spearman zeros really underflow double precision. They are at `r if (n_distinct(underflow_rows$threshold, na.rm = TRUE) > 1) "thresholds" else "threshold"` `r str_flatten_comma(sort(unique(underflow_rows$threshold)), " and ")`, with `r scales::comma(min(underflow_rows$n, na.rm = TRUE))`–`r scales::comma(max(underflow_rows$n, na.rm = TRUE))` CpGs, where `cor.test()` already uses the *t* approximation. Their log~10~ *P* runs from `r round(max(underflow_rows$log10_p, na.rm = TRUE))` to `r round(min(underflow_rows$log10_p, na.rm = TRUE))`, and they are reported as *P* < 1.0 × 10^-300^.
+- The other `r nrow(representable_rows)` zeros are representable. The largest is `r describe_zero(largest_zero)` and the smallest `r describe_zero(smallest_zero)`. `r n_cause("AS 89 Edgeworth series truncated to 0")` come from the AS 89 series being truncated to 0 (n ≤ 1,290). `r n_cause("label rounded to 3 decimals")` come from `round(p, 3)` in the stable_mci labels (Figures S7–S8), even though `cor.test()` returned a non-zero value.
+- So the legend sentence "*P* = 0 denotes *P*-values that exceed double-precision floating-point limits" (Figures 1 and 5 and Figures S2–S4 and S6–S8) is wrong for every zero outside the underflow rows, as is the Results line 34 phrase "exceeding machine precision limits".
+- `r nrow(as89_nonzero)` labels in `r str_flatten_comma(unique(as89_nonzero$figure), " and ")` printed a non-zero AS 89 *P* below 0.001. Those values differ from the *t* approximation by a factor of `r sprintf("%.2f", as89_ratio[1])` to `r sprintf("%.2f", as89_ratio[2])`, the same order of magnitude. If only the zeros are replaced, those panels will mix two methods; relabelling with `exact = FALSE` throughout keeps one method per panel and changes no conclusion.
+- The permutation zeros mean that 0 of 1,000 permutations reached the observed DPS. They are best reported as *P* < 0.001.

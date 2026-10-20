@@ -7,6 +7,7 @@
 #   Level 2: Directionality analyses + correlation trend (read Level 1 outputs)
 #   Level 3: Combined directionality + supplementary patch figure
 #   Level 4: Main validation patch figure (reads all prior outputs)
+#   Level 5: Reviewer-response check (reads Level 1-2 outputs; no float)
 #
 # Usage: bash validation/render.sh
 
@@ -101,6 +102,20 @@ echo ""
 echo "--- Level 4: Main validation patch figure ---"
 
 render_html "validation/patch_figures/01_patch_main_figure.qmd"
+
+echo ""
+
+# ========================================
+# Level 5: Reviewer-response check
+# ========================================
+# ADJ-D-26-02882 reviewer round (R2.8). Response letter only; no manuscript
+# float reads its outputs. Reads Level 1-2 outputs (and data/), overwrites none,
+# and writes directionality_results_AddNeuroMed_single_trim.rds and
+# dmp_overlap_ADNI_AIBL_AddNeuroMed.rds.
+echo "--- Level 5: Reviewer-response check (no manuscript float) ---"
+
+# R2.8: single- vs double-trimmed AddNeuroMed sign tests; 403-DMP overlap
+render_html "validation/11_directionality_trim_check.qmd"
 
 echo ""
 echo "========================================"

@@ -5,8 +5,17 @@
 #   Step 1: DMP scatter, extended scatter, effect size correlation (independent)
 #   Step 2: Patch figures (read Step 1 RDS outputs)
 #
-# Excluded: 04_gene_dementia_function.qmd, 06_patch_fig_normal2mci.qmd
+# Excluded: 04_gene_dementia_function.qmd
 #   — not referenced by ms/fig_tbl.
+#
+# Rendered elsewhere: 05_zero_pvalue_check.qmd (reviewer round, R1.5/R2.7)
+#   — rendered by manage_project/render_manuscript.sh in its REVIEWER CHECKS
+#   stage, after Pipeline C. Besides this folder's and validation/'s outputs it
+#   reads saved outputs of stable_mci_focused/ (rendered after this script),
+#   Pipeline B (UMAP/lite/, VAE/lite/, VAE_UMAP_comb/, APOE/) and Pipeline C
+#   (pathway_analysis/), none of which exist yet when this script runs under
+#   --all on a fresh clone. To re-run it alone once they exist:
+#   quarto render normal2mci_focused/05_zero_pvalue_check.qmd --to html
 #
 # Usage: bash normal2mci_focused/render.sh
 

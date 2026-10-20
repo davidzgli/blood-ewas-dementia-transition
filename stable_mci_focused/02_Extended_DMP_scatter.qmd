@@ -64,10 +64,16 @@ glimpse(effect_size_series)
 
 ## Make a data preparation function
 
-This function accepts a data tibble, filters out the outliers, annotates `pval_cutoff` with the site count, and computes the correlation between stable_mci and a second dementia category.
+This function accepts a data tibble, filters out the outliers, annotates `pval_cutoff` with the site count, and computes the correlation between stable_mci and a second dementia category. *P* values are labelled by the shared Spearman label helper in the manuscript's house style (three significant figures, a decimal at *P* ≥ 0.01 and scientific notation below; custom_func/p_value_label.R). It never prints 0: it re-runs the test with the t approximation when the default returns 0, and prints "P < 1.0 x 10^-300" only for true underflow.
 
 ```{r}
 #| output: false
+
+source(here("custom_func/display_scientific_notation.R"))
+source(here("custom_func/spearman_p_label.R"))
+source(here("custom_func/r_value_label.R"))
+
+# Plotmath labels (parsed by geom_text), so exponents print as superscripts as in Figure 1
 
 effect_size_for_scatter_plot <- function(.data, filter_condition = TRUE, demcat2 = normal2incid) {
   .data |>
@@ -85,9 +91,11 @@ effect_size_for_scatter_plot <- function(.data, filter_condition = TRUE, demcat2
     mutate(
       .by = c(pval_cutoff, stable_mci_grp),
       cor = cor.test(stable_mci, {{demcat2}}, method = "spearman")$estimate,
-      cor_pval = cor.test(stable_mci, {{demcat2}}, method = "spearman")$p.value,
+      # Never 0 unless the value underflows (R1.5/R2.7)
+      cor_pval = spearman_p_value(stable_mci, {{demcat2}}),
+      # The group name leads the label, which is printed in a panel corner rather than along the line
       cor_label = glue(
-        "r={scales::label_number(style_negative='hyphen', accuracy=0.01)(cor)}; p={round(cor_pval, 3)}"
+        '"{stable_mci_grp}:"~{r_value_label(cor)}*";"~{spearman_p_label(cor_pval)}'
       )
     )
 }
@@ -105,6 +113,8 @@ effect_size_series |>
 
 This function accepts a data tibble and plots a scatter plot of the effect size of stable_mci against a second dementia category, faceted by p value cutoff.
 
+The correlation labels sit in the bottom-left corner of each panel, one line per group, as in the other effect-size scatter figures. Written along the regression line, the main-group labels ran past the panel edge and were clipped once the *P* values were printed in full (R1.5); the bottom-left corner is empty, or holds at most two corner points, in every panel.
+
 ```{r}
 #| output: false
 
@@ -112,28 +122,38 @@ make_effect_size_scatter_plot <- function(.data, demcat2 = "prev", ...) {
   .data |>
     ggplot(aes(x = stable_mci, y = .data[[demcat2]], colour = stable_mci_grp)) +
     geom_point(alpha = 0.6, size = 1) +
-    geomtextpath::geom_textsmooth(
-      aes(label = cor_label),
+    geom_smooth(
       method = "lm",
       formula = y ~ x,
       se = FALSE,
-      size = 6 / .pt,
-      key_glyph = draw_key_point,
-      textcolour = "black",
       linewidth = 1,
-      vjust = -0.2,
-      hjust = 0.5
+      key_glyph = draw_key_point
+    ) +
+    # One label per panel and group, main above outlier
+    geom_text(
+      data = \(d) d |>
+        distinct(pval_cutoff, stable_mci_grp, cor, cor_pval, cor_label) |>
+        mutate(label_y = if_else(stable_mci_grp == "main", 0.165, 0.09)),
+      aes(y = I(label_y), label = cor_label),
+      x = I(0.07),
+      hjust = 0,
+      size = 6 / .pt,
+      colour = "black",
+      parse = TRUE,
+      show.legend = FALSE
     ) +
     scale_color_discrete_qualitative(palette = "Dark 3") +
     # Show a gray dashed line at x = 0 and y = 0
     geom_hline(yintercept = 0, linetype = "dashed", color = "gray") +
     geom_vline(xintercept = 0, linetype = "dashed", color = "gray") +
     facet_wrap(~ pval_cutoff, scales = "free", labeller = label_both) +
+    # Axis titles say "effect size" (= ΔM, the covariate-adjusted M-value difference from stable
+    # normal, defined in the legend; R2.7). The authors preferred "effect size" to "ΔM" (2026-10-09).
     labs(
-      x = "Effect size of stable_mci",
+      x = "stable_mci effect size",
       y = glue(
-        "Effect size of {dc}",
-        dc = if (demcat2 == "prev") "prevalent dementia" else glue("{demcat2} transition")
+        "{dc} effect size",
+        dc = if (demcat2 == "prev") "Prevalent dementia" else glue("{demcat2} transition")
       )
     ) +
     guides(color = guide_legend(title = "Stable MCI Group", theme(legend.title.position = "left"))) +

@@ -14,6 +14,7 @@ Boxplot visualizations for VAE latent coordinates comparing dementia categories 
 #| echo: false
 
 pacman::p_load(ggh4x, install = FALSE)
+source(here("custom_func/p_value_label.R"))
 
 conflicted::conflict_prefer_all("dplyr", quiet = TRUE)
 ```
@@ -57,9 +58,8 @@ ttest_result <-
   ttest_result |>
   bind_rows(.id = "demcat") |>
   mutate(
-    label = sprintf(" italic(P) = %.2e", p) %>%
-      str_replace_all("e", " %*% 10^") %>%
-      str_replace_all("=", "=="),
+    # House style (custom_func/p_value_label.R); quoted numbers keep their trailing zeros
+    label = p_value_label(p),
     demcat = fct_relevel(demcat, "stable_normal", "normal2mci", "stable_mci",
                          "normal2incid", "mci2incid", "prev_dementia")
   )
@@ -79,9 +79,7 @@ anova_result <-
     .by = vae_dir
   ) |>
   mutate(
-    label = sprintf("italic(P) = %.2e", p) %>%
-      str_replace_all("e", " %*% 10^") %>%
-      str_replace_all("=", "==")
+    label = p_value_label(p)
   )
 
 anova_result
@@ -130,7 +128,7 @@ boxplot_list$prev <-
   make_boxplot_vae(
     text_size = 6,
     stat_result = filter(ttest_result, demcat == "prev_dementia") %>%
-      mutate(label = str_remove(label, " italic\\(P\\) == "))
+      mutate(label = format_p_value(p, style = "plotmath"))
   )
 
 boxplot_list$prev
@@ -147,7 +145,7 @@ boxplot_list$stable_mci <-
   make_boxplot_vae(
     text_size = 6,
     stat_result = filter(ttest_result, demcat == "stable_mci") %>%
-      mutate(label = str_remove(label, " italic\\(P\\) == "))
+      mutate(label = format_p_value(p, style = "plotmath"))
   )
 
 boxplot_list$stable_mci
@@ -164,7 +162,7 @@ boxplot_list$normal2incid <-
   make_boxplot_vae(
     text_size = 6,
     stat_result = filter(ttest_result, demcat == "normal2incid") %>%
-      mutate(label = str_remove(label, " italic\\(P\\) == "))
+      mutate(label = format_p_value(p, style = "plotmath"))
   )
 
 boxplot_list$normal2incid

@@ -1,9 +1,13 @@
 #!/bin/bash
 # render.sh - Render DMP (differentially methylated position) analysis
 #
-# Two steps with dependency:
+# Three steps:
 #   1. Manhattan plot (produces RDS for patch figure)
 #   2. Supplementary patch figure (reads Manhattan RDS)
+#   3. Reviewer-response analyses (independent; read only data/):
+#      plate sensitivity, cognition-adjusted refit, follow-up-restricted refit.
+#      No manuscript float; their numbers are quoted in the response letter
+#      and the revised text.
 #
 # Usage: bash dmp/render.sh
 
@@ -65,6 +69,23 @@ echo "--- Step 2: Supplementary patch figure (reads Manhattan RDS) ---"
 render_html "dmp/patch_figures/01_patch_suppl_figure.qmd"
 
 echo ""
+
+# ========================================
+# Step 3: Reviewer-response analyses
+# ========================================
+# ADJ-D-26-02882 reviewer round. Response letter and revised text only; no
+# manuscript float reads these outputs. Each file reads only data/ (association
+# results, the adjusted methylation h5 matrix, covariates), so none depends on
+# Steps 1-2 or on another file in this step.
+echo "--- Step 3: Reviewer-response analyses (no manuscript float) ---"
+
+# R1.1: refit of the 403 DMPs adjusted for baseline cognition
+render_html "dmp/04_cognition_adjusted.qmd"
+# R1.4: follow-up description; refits without < 5-y follow-up and with an
+# AGES-II-attending stable_normal reference
+render_html "dmp/05_followup_restricted.qmd"
+
+echo ""
 echo "========================================"
 echo "Render Complete"
 echo "========================================"
@@ -80,4 +101,6 @@ else
     echo "Output locations:"
     echo "  - dmp/output/*.rds                            (Manhattan plot data)"
     echo "  - dmp/patch_figures/output/fig_suppl_5_manhattan.png  (supplementary figure)"
+    echo "  - dmp/output/cognition_adjusted_*             (reviewer response: cognition-adjusted refit)"
+    echo "  - dmp/output/followup_restricted_*            (reviewer response: follow-up-restricted refit)"
 fi

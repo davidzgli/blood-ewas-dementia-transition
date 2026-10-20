@@ -6,6 +6,7 @@
 #
 # Execution order:
 #   1. VAE embedding (training + average ensemble)
+#   1b. Cross-validation fold composition (reviewer-round check; no float)
 #   2. Density peak analysis (centroids, correlations)
 #   3. Path2D DPS computation and ranking
 #   4. DPS visualization, scatter contour, boxplots (parallel-safe)
@@ -76,6 +77,18 @@ echo ""
 echo "--- Step 1: VAE embedding (beta=0.001, 5-fold CV, average ensemble, thresholds 7 & 8) ---"
 
 render_html "VAE/lite/01_vae_embedding.qmd"
+
+echo ""
+
+# ========================================
+# Step 1b: Cross-validation fold composition
+# ========================================
+# ADJ-D-26-02882 reviewer round (R2.5). Rebuilds the 5-fold split of Step 1
+# without training and tabulates the held-out groups; read only by the response
+# letter, no manuscript float. Reads the Step 1 embeddings for an identity check.
+echo "--- Step 1b: Cross-validation fold composition (reviewer-round check; no float) ---"
+
+render_html "VAE/lite/02_cv_fold_composition.qmd"
 
 echo ""
 
@@ -162,6 +175,7 @@ else
     echo ""
     echo "Output locations:"
     echo "  - VAE/lite/output/*.rds                                  (embeddings)"
+    echo "  - VAE/lite/output/cv_fold_composition.rds                (fold composition)"
     echo "  - VAE/lite/DPS/output/*.rds                              (centroids, DPS results)"
     echo "  - VAE/lite/DPS/output/fig_tbl/*.png                      (DPS plots)"
     echo "  - VAE/lite/scatter/output/fig_tbl/threshold{7,8}/*.png   (scatter plots)"

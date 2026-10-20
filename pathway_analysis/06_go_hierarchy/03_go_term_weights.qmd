@@ -1,0 +1,333 @@
+---
+title: "GO Term Recount: Duplicate Parents and Redundancy-Aware Weights"
+subtitle: "Rule 1 removes parent terms identical to a significant child; Rule 2 weights each term significant in only one group by its significant relatives (reviewer R2.9)"
+---
+
+## Overview
+
+Reviewer R2.9 asked whether GO terms reported as specific to one dementia group could be hierarchically related to terms significant in another group. The authors chose (2026-10-09) to count such terms with two rules, applied to the saved GO biological-process (BP) enrichment results at the top 1,000 and top 2,000 CpG sites; no enrichment is re-run. On 2026-10-13 they made Rule 2 redundancy-aware: a relative significant in the term's own group now lowers the weight too, so nested terms within a group are discounted as well as terms related to another group's.
+
+- **Rule 1 (exact duplicates).** A significant parent term whose genes in the background set are identical to those of a significant child term is dropped, and the more specific child is kept. Because the background set is shared, such a pair has the same test, and so the same result, in every group.
+- **Rule 2 (redundancy-aware weight).** Each term significant in only one group, after Rule 1, gets the weight w = 1 − s / r, where r is the number of its immediate relatives in the GO graph (its parents and children, all relation types) and s the number of these significant in any group, its own or another. A term with no significant immediate relative counts as one; otherwise its weight shrinks by the share of its relatives that are significant. A dropped duplicate is merged into its kept term. Counts of such terms per group and per functional category are sums of w, rounded half up. (Until 2026-10-13, s counted only the relatives significant in another group.)
+
+This notebook runs right after the GO enrichment (Step 3b of `pathway_analysis/render.sh`) and writes the Rule-1 map and the weights that the later steps read through `custom_func/go_term_weights.R`: the transition-specific terms and the GO UpSet plots (Figure 6B, Figure S24B), the functional-category bar plots (Figure 6C, Figure S25), Tables S4–S8 and Data S7–S8.
+
+## Load packages
+
+`GO.db` supplies the GO BP graph; the tidyverse and `here` are pre-loaded by `.Rprofile`. `GO.db` attaches `AnnotationDbi` and `S4Vectors`, which mask `select()`, `filter()` and `rename()`, so dplyr is preferred for every conflict.
+
+```{r}
+#| label: load-packages
+
+pacman::p_load(GO.db, install = FALSE)
+
+conflicted::conflict_prefer_all("dplyr", quiet = TRUE)
+
+source(here("custom_func/go_term_weights.R"))
+
+out_dir <- here("pathway_analysis/06_go_hierarchy/output")
+fs::dir_create(out_dir)
+```
+
+## Helper functions
+
+Helpers that read the saved enrichment results, find the duplicate parents (Rule 1) and compute the weights (Rule 2). Significance follows `03_transition_specific_GO_terms`: adjusted *P* ≤ 0.05.
+
+```{r}
+#| label: helpers
+
+group_levels <- c("normal2mci", "stable_mci", "normal2incid", "mci2incid", "prev")
+
+bp_parents <- as.list(GOBPPARENTS)
+bp_children <- as.list(GOBPCHILDREN)
+bp_ancestors <- as.list(GOBPANCESTOR)
+
+read_go_results <- function(top_n) {
+  read_rds(here(glue("pathway_analysis/02_gene_ontology/output/top{top_n}_all_GO_results.rds")))
+}
+
+# Genes of each term within the background set (universe), which all five groups share
+read_term_gene_sets <- function(top_n) {
+  enrich <- read_rds(here(glue("pathway_analysis/02_gene_ontology/output/top{top_n}_all_GO_enrichResult.rds")))
+  universe <- enrich[[1]]@universe
+  stopifnot(map_lgl(enrich, \(e) identical(e@universe, universe)))
+
+  gene_sets <- enrich |>
+    map(\(e) e@geneSets) |>
+    unname() |>
+    list_c()
+  gene_sets <- gene_sets[!duplicated(names(gene_sets))]
+
+  map(gene_sets, \(genes) sort(intersect(genes, universe)))
+}
+
+# Rule 1: significant parents whose genes are identical to those of a significant descendant
+find_duplicate_parents <- function(results, gene_sets) {
+  sig_ids <- results |>
+    filter(p.adjust <= 0.05) |>
+    distinct(ID) |>
+    pull(ID)
+
+  same_genes <- tibble(
+    ID = sig_ids,
+    gene_key = map_chr(gene_sets[sig_ids], \(genes) str_c(genes, collapse = "/"))
+  ) |>
+    add_count(gene_key) |>
+    filter(n > 1) |>
+    select(-n)
+
+  pairs <- same_genes |>
+    inner_join(same_genes, by = "gene_key", suffix = c("_child", "_parent"), relationship = "many-to-many") |>
+    filter(map2_lgl(ID_child, ID_parent, \(child, parent) parent %in% bp_ancestors[[child]])) |>
+    select(child = ID_child, parent = ID_parent)
+
+  # A parent can sit above a chain of identical terms; keep the most specific one
+  pairs |>
+    filter(!child %in% parent) |>
+    mutate(
+      direct = map2_lgl(child, parent, \(child, parent) parent %in% bp_parents[[child]]),
+      relation = map2_chr(child, parent, \(child, parent) {
+        edges <- bp_parents[[child]]
+        if (parent %in% edges) str_c(unique(names(edges)[edges == parent]), collapse = "; ") else "ancestor"
+      })
+    ) |>
+    left_join(distinct(results, ID, parent_description = Description), by = c(parent = "ID")) |>
+    left_join(distinct(results, ID, child_description = Description), by = c(child = "ID")) |>
+    left_join(
+      results |>
+        filter(p.adjust <= 0.05) |>
+        summarise(groups = str_c(sort(condition), collapse = ", "), .by = ID),
+      by = c(parent = "ID")
+    ) |>
+    relocate(parent, parent_description, child, child_description) |>
+    arrange(parent)
+}
+
+# Rule 1 must not change any test: the pair agrees on every number in every group
+check_duplicate_pairs <- function(results, duplicates) {
+  tested <- results |> select(condition, ID, GeneRatio, BgRatio, geneID, pvalue, p.adjust)
+
+  compared <- duplicates |>
+    select(parent, child) |>
+    left_join(tested, by = c(parent = "ID"), relationship = "many-to-many") |>
+    full_join(
+      duplicates |>
+        select(parent, child) |>
+        left_join(tested, by = c(child = "ID"), relationship = "many-to-many"),
+      by = c("parent", "child", "condition"),
+      suffix = c("_parent", "_child")
+    )
+
+  with(compared, all(
+    GeneRatio_parent == GeneRatio_child,
+    BgRatio_parent == BgRatio_child,
+    geneID_parent == geneID_child,
+    pvalue_parent == pvalue_child,
+    p.adjust_parent == p.adjust_child
+  ))
+}
+
+# Rule 2: redundancy-aware weight of each term significant in only one group, after Rule 1.
+# s counts the immediate relatives significant in any group (the term's own or another), r all of
+# its immediate relatives; w = 1 - s / r.
+compute_term_weights <- function(results, duplicates) {
+  sig <- results |>
+    filter(p.adjust <= 0.05, !ID %in% duplicates$parent) |>
+    select(condition, ID, Description)
+
+  kept_term <- set_names(duplicates$child, duplicates$parent)
+  to_kept <- function(ids) unname(coalesce(kept_term[ids], ids))
+
+  # A kept term and the parents merged into it form one node
+  node_members <- function(id) c(id, duplicates$parent[duplicates$child == id])
+
+  immediate_relatives <- function(id) {
+    members <- node_members(id)
+    c(bp_parents[members], bp_children[members]) |>
+      unlist(use.names = FALSE) |>
+      setdiff(c(members, "all")) |>
+      to_kept() |>
+      unique() |>
+      setdiff(id)
+  }
+
+  sig_groups <- split(sig$condition, sig$ID)
+  descriptions <- deframe(distinct(results, ID, Description))
+
+  sig |>
+    add_count(ID, name = "n_groups") |>
+    filter(n_groups == 1) |>
+    select(-n_groups) |>
+    mutate(
+      relatives = map(ID, immediate_relatives),
+      relatives_significant = map(relatives, \(relatives) intersect(relatives, names(sig_groups))),
+      relatives_same = map2(relatives_significant, condition, \(relatives, group) {
+        keep(relatives, \(rel) group %in% sig_groups[[rel]])
+      }),
+      relatives_other = map2(relatives_significant, condition, \(relatives, group) {
+        keep(relatives, \(rel) any(sig_groups[[rel]] != group))
+      }),
+      n_relatives = lengths(relatives),
+      n_relatives_same = lengths(relatives_same),
+      n_relatives_other = lengths(relatives_other),
+      n_relatives_significant = lengths(relatives_significant),
+      w = 1 - n_relatives_significant / n_relatives,
+      across(c(relatives_significant, relatives_same, relatives_other), \(rel_list) map_chr(rel_list, \(ids) {
+        rel_groups <- map_chr(ids, \(id) str_c(sig_groups[[id]], collapse = ", "))
+        str_c(ids, " ", descriptions[ids], " [", rel_groups, "]", collapse = "; ")
+      }))
+    ) |>
+    select(
+      condition, ID, Description, n_relatives, n_relatives_same, n_relatives_other,
+      n_relatives_significant, relatives_significant, relatives_same, relatives_other, w
+    ) |>
+    arrange(factor(condition, levels = group_levels), w, ID)
+}
+
+# Per-group counts: significant terms before and after Rule 1, and the weighted count
+summarise_groups <- function(results, duplicates, weights, top_n) {
+  sig <- results |> filter(p.adjust <= 0.05)
+
+  sig |>
+    count(condition, name = "n_significant_before") |>
+    left_join(
+      sig |> filter(!ID %in% duplicates$parent) |> count(condition, name = "n_significant"),
+      by = "condition"
+    ) |>
+    left_join(
+      sig |> add_count(ID, name = "n_groups") |> filter(n_groups == 1) |> count(condition, name = "n_one_group_before"),
+      by = "condition"
+    ) |>
+    left_join(
+      weights |>
+        summarise(
+          n_one_group = n(),
+          n_down_weighted = sum(w < 1, na.rm = TRUE),
+          n_relative_other_group = sum(n_relatives_other > 0, na.rm = TRUE),
+          n_relative_same_group = sum(n_relatives_same > 0, na.rm = TRUE),
+          min_w = min(w, na.rm = TRUE),
+          sum_w = sum(w, na.rm = TRUE),
+          .by = condition
+        ),
+      by = "condition"
+    ) |>
+    mutate(top_n = top_n, n_weighted = round_half_up(sum_w), .before = 1) |>
+    arrange(factor(condition, levels = group_levels))
+}
+```
+
+## Top 1,000 CpG sites
+
+The duplicate parents, their check, the weights and the per-group counts at the top 1,000 CpG sites, the threshold the main text reports.
+
+```{r}
+#| label: top1000
+
+results_1000 <- read_go_results(1000)
+gene_sets_1000 <- read_term_gene_sets(1000)
+
+duplicates_1000 <- find_duplicate_parents(results_1000, gene_sets_1000)
+weights_1000 <- compute_term_weights(results_1000, duplicates_1000)
+groups_1000 <- summarise_groups(results_1000, duplicates_1000, weights_1000, 1000)
+
+stopifnot(
+  check_duplicate_pairs(results_1000, duplicates_1000),
+  !anyDuplicated(duplicates_1000$parent),
+  nrow(duplicates_1000) == 5,
+  nrow(weights_1000) == 204,
+  all(weights_1000$n_relatives > 0),
+  all(weights_1000$w >= 0 & weights_1000$w <= 1),
+  # s is the union of the relatives significant in the term's own group and in another group
+  all(weights_1000$n_relatives_significant <= weights_1000$n_relatives_same + weights_1000$n_relatives_other),
+  all(weights_1000$n_relatives_significant >= pmax(weights_1000$n_relatives_same, weights_1000$n_relatives_other)),
+  sum(weights_1000$n_relatives_other > 0) == 32
+)
+
+duplicates_1000 |>
+  knitr::kable(caption = "Rule 1: parent terms dropped at the top 1,000 CpG sites")
+
+groups_1000 |>
+  mutate(across(c(min_w, sum_w), \(x) round(x, 2))) |>
+  knitr::kable(caption = "Significant and transition-specific GO BP terms per group, top 1,000 CpG sites")
+```
+
+### Down-weighted terms
+
+The terms significant in only one group that have at least one significant immediate relative, in their own group or in another, with those relatives.
+
+```{r}
+#| label: down-weighted-1000
+
+weights_1000 |>
+  filter(w < 1) |>
+  mutate(w = round(w, 3)) |>
+  select(condition, ID, Description, n_relatives, n_relatives_same, n_relatives_other, w, relatives_significant) |>
+  knitr::kable(caption = "Down-weighted terms, top 1,000 CpG sites")
+```
+
+## Top 2,000 CpG sites
+
+The same steps at the top 2,000 CpG sites (Figure S24, Figure S25 and Data S8).
+
+```{r}
+#| label: top2000
+
+results_2000 <- read_go_results(2000)
+gene_sets_2000 <- read_term_gene_sets(2000)
+
+duplicates_2000 <- find_duplicate_parents(results_2000, gene_sets_2000)
+weights_2000 <- compute_term_weights(results_2000, duplicates_2000)
+groups_2000 <- summarise_groups(results_2000, duplicates_2000, weights_2000, 2000)
+
+stopifnot(
+  check_duplicate_pairs(results_2000, duplicates_2000),
+  !anyDuplicated(duplicates_2000$parent),
+  nrow(duplicates_2000) == 18,
+  nrow(weights_2000) == 431,
+  all(weights_2000$n_relatives > 0),
+  all(weights_2000$w >= 0 & weights_2000$w <= 1),
+  all(weights_2000$n_relatives_significant <= weights_2000$n_relatives_same + weights_2000$n_relatives_other),
+  all(weights_2000$n_relatives_significant >= pmax(weights_2000$n_relatives_same, weights_2000$n_relatives_other)),
+  sum(weights_2000$n_relatives_other > 0) == 153
+)
+
+duplicates_2000 |>
+  knitr::kable(caption = "Rule 1: parent terms dropped at the top 2,000 CpG sites")
+
+groups_2000 |>
+  mutate(across(c(min_w, sum_w), \(x) round(x, 2))) |>
+  knitr::kable(caption = "Significant and transition-specific GO BP terms per group, top 2,000 CpG sites")
+```
+
+## Save the results
+
+The Rule-1 maps and the term weights at both thresholds, and the per-group counts, saved for the later pipeline steps, Data S7–S8 and the response letter.
+
+```{r}
+#| label: save
+
+write_rds(duplicates_1000, fs::path(out_dir, "top1000_go_duplicate_parents.rds"))
+write_rds(duplicates_2000, fs::path(out_dir, "top2000_go_duplicate_parents.rds"))
+write_rds(weights_1000, fs::path(out_dir, "top1000_go_term_weights.rds"))
+write_rds(weights_2000, fs::path(out_dir, "top2000_go_term_weights.rds"))
+write_rds(bind_rows(groups_1000, groups_2000), fs::path(out_dir, "go_weighted_counts_by_group.rds"))
+```
+
+## Summary
+
+The numbers quoted in the Results and the response letter, computed above.
+
+```{r}
+#| label: summary-values
+
+total_1000 <- groups_1000 |> summarise(across(where(is.numeric), \(x) sum(x, na.rm = TRUE)))
+total_2000 <- groups_2000 |> summarise(across(where(is.numeric), \(x) sum(x, na.rm = TRUE)))
+w_range <- function(weights) {
+  partial <- weights |> filter(w < 1) |> pull(w)
+  str_c(format(round(min(partial, na.rm = TRUE), 2), nsmall = 2), "–", format(round(max(partial, na.rm = TRUE), 2), nsmall = 2))
+}
+```
+
+- Rule 1 dropped `r nrow(duplicates_1000)` parent terms at the top 1,000 CpG sites and `r nrow(duplicates_2000)` at the top 2,000; `r sum(duplicates_1000$direct) + sum(duplicates_2000$direct)` of the `r nrow(duplicates_1000) + nrow(duplicates_2000)` were direct parents.
+- Top 1,000: `r total_1000$n_one_group` terms significant in only one group (`r total_1000$n_one_group_before` before Rule 1); `r total_1000$n_relative_other_group` had an immediate relative significant in another group and `r total_1000$n_relative_same_group` one significant in their own group, so `r total_1000$n_down_weighted` were down-weighted (w `r w_range(weights_1000)`). Weighted counts: `r str_c(groups_1000$condition, " ", groups_1000$n_weighted, collapse = ", ")`.
+- Top 2,000: `r total_2000$n_one_group` terms (`r total_2000$n_one_group_before` before Rule 1); `r total_2000$n_relative_other_group` with a relative significant in another group, `r total_2000$n_relative_same_group` in their own group, `r total_2000$n_down_weighted` down-weighted (w `r w_range(weights_2000)`; `r sum(weights_2000$w == 0)` terms have w = 0, every immediate relative being significant). Weighted counts: `r str_c(groups_2000$condition, " ", groups_2000$n_weighted, collapse = ", ")`.

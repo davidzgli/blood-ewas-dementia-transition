@@ -1,0 +1,364 @@
+---
+title: "Rule-Match Counts of the GO Functional Categorisation"
+subtitle: "How often the rule order and the exclusions decided a term's category (reviewer R2.4)"
+---
+
+## Overview
+
+Reviewer R2.4 asked for more detail on the keyword-based function that assigns each transition-specific GO term to a functional category. That function, `custom_func/assign_biofunc_category.R`, is an ordered `case_when()` with 22 rules: the first rule that matches wins, three rules carry exclusion patterns, and a term that matches no rule stays unassigned. This notebook counts, at the top 1,000 and top 2,000 CpG sites, how many terms matched one rule, more than one rule or none; how many multiple matches were decided between two specific categories rather than against the broad Development and Differentiation rule; and how many assignments the exclusions changed. It reads only saved outputs — no enrichment or categorisation is re-run — and derives every rule from the function's own source, so the counts cannot drift from the rules.
+
+## Load packages
+
+`readxl` reads the saved categorisation workbooks; the tidyverse and `here` are pre-loaded by `.Rprofile`.
+
+```{r}
+#| label: load-packages
+
+pacman::p_load(readxl, install = FALSE)
+
+conflicted::conflict_prefer_all("dplyr", quiet = TRUE)
+
+source(here("custom_func/assign_biofunc_category.R"))
+
+fs::dir_create(here("pathway_analysis/06_go_hierarchy/output"))
+```
+
+## Extract the rules from the function source
+
+Each `case_when()` branch is taken apart into its category, its positive keyword pattern and, where present, its exclusion pattern, so that every rule can be evaluated separately. The assertions fail the render if the function's shape ever changes.
+
+```{r}
+#| label: extract-rules
+
+case_when_call <- body(assign_biofunc_category)[[3]]
+stopifnot(identical(case_when_call[[1]], quote(dplyr::case_when)))
+
+rule_formulas <- as.list(case_when_call)[-1]
+
+# The last branch is the TRUE ~ NA fallback, not a rule
+fallback <- rule_formulas[[length(rule_formulas)]]
+stopifnot(isTRUE(fallback[[2]]), is.na(fallback[[3]]))
+rule_formulas <- head(rule_formulas, -1)
+
+# Pattern argument of a stringr::str_detect(desc, <pattern>) call
+detect_pattern <- function(detect_call) {
+  stopifnot(
+    identical(detect_call[[1]], quote(stringr::str_detect)),
+    identical(detect_call[[2]], quote(desc))
+  )
+  eval(detect_call[[3]], baseenv())
+}
+
+# One rule: either str_detect(...) or str_detect(...) & !str_detect(...)
+parse_rule <- function(rule_formula) {
+  condition <- rule_formula[[2]]
+  has_exclusion <- identical(condition[[1]], as.name("&"))
+
+  if (has_exclusion) {
+    negated <- condition[[3]]
+    stopifnot(identical(negated[[1]], as.name("!")))
+    positive <- detect_pattern(condition[[2]])
+    exclusion <- detect_pattern(negated[[2]])
+  } else {
+    positive <- detect_pattern(condition)
+    exclusion <- NA_character_
+  }
+
+  tibble(
+    category = as.character(rule_formula[[3]]),
+    pattern = positive,
+    exclusion = exclusion
+  )
+}
+
+rules <- rule_formulas |>
+  map(parse_rule) |>
+  list_rbind() |>
+  mutate(rule = row_number(), .before = 1)
+
+catch_all <- "Development and Differentiation"
+
+stopifnot(
+  nrow(rules) == 22,
+  !anyDuplicated(rules$category),
+  sum(!is.na(rules$exclusion)) == 3,
+  rules$category[22] == catch_all
+)
+
+rules |>
+  knitr::kable(caption = "The 22 rules, in the order they are tested")
+```
+
+## Load the transition-specific terms
+
+The input is the list the categorisation notebook reads (`03_transition_specific_GO_terms/output/top{N}_condition_specific_GO_terms.csv`); the saved workbook (`04_function_categorization/output/top{N}_condition_specific_GO_terms_auto_cat.xlsx`) is read to check that the function, applied now, reproduces what was saved.
+
+```{r}
+#| label: load-terms
+
+thresholds <- c(1000, 2000)
+
+read_terms <- function(top_n) {
+  terms <- read_csv(
+    here(glue("pathway_analysis/03_transition_specific_GO_terms/output/top{top_n}_condition_specific_GO_terms.csv")),
+    show_col_types = FALSE
+  )
+  saved <- read_excel(
+    here(glue("pathway_analysis/04_function_categorization/output/top{top_n}_condition_specific_GO_terms_auto_cat.xlsx"))
+  )
+
+  # The saved workbook is the same terms, in the same order, with the
+  # category the function assigns today
+  stopifnot(
+    identical(saved$ID, terms$ID),
+    identical(saved$Description, terms$Description),
+    identical(saved$function_category, assign_biofunc_category(terms$Description)),
+    !anyDuplicated(terms$ID)
+  )
+
+  terms |> mutate(top_n = top_n, .before = 1)
+}
+
+terms <- thresholds |>
+  map(read_terms) |>
+  list_rbind()
+
+terms |>
+  count(top_n, name = "n_terms") |>
+  knitr::kable(caption = "Transition-specific GO terms per threshold")
+```
+
+## Evaluate every rule on every term
+
+Each rule is evaluated on its own, giving three logical matrices (term × rule): the positive pattern, the exclusion pattern, and the rule as the function applies it (positive and not excluded). Taking the first `TRUE` column of the last matrix must reproduce the function's output for every term; the render stops if it does not.
+
+```{r}
+#| label: rule-matrices
+
+desc <- str_to_lower(terms$Description)
+
+detect_each <- function(patterns) {
+  map(patterns, \(p) if (is.na(p)) rep(FALSE, length(desc)) else str_detect(desc, p)) |>
+    set_names(rules$category) |>
+    as_tibble() |>
+    as.matrix()
+}
+
+positive_hit <- detect_each(rules$pattern)
+exclusion_hit <- detect_each(rules$exclusion)
+rule_hit <- positive_hit & !exclusion_hit
+
+first_match <- function(hit_matrix) {
+  apply(hit_matrix, 1, \(row) if (any(row)) colnames(hit_matrix)[which(row)[1]] else NA_character_)
+}
+
+assigned <- assign_biofunc_category(terms$Description)
+
+stopifnot(identical(unname(first_match(rule_hit)), assigned))
+```
+
+## Per-term rule table
+
+One row per term and threshold: how many rules it matched, which ones in test order, its assigned category, the category it would get without the three exclusions, and the match type used in the response letter. A multiple match is "specific plus catch-all" when exactly one specific rule matched alongside Development and Differentiation, and "order decided" when two or more specific rules matched.
+
+```{r}
+#| label: term-table
+
+specific_cols <- rules$category != catch_all
+
+matched_names <- function(hit_matrix) {
+  apply(hit_matrix, 1, \(row) paste(colnames(hit_matrix)[row], collapse = " > "))
+}
+
+term_rules <- terms |>
+  mutate(
+    n_match = rowSums(rule_hit),
+    n_match_specific = rowSums(rule_hit[, specific_cols, drop = FALSE]),
+    matches_catch_all = rule_hit[, catch_all],
+    matched_rules = matched_names(rule_hit),
+    category = assigned,
+    category_without_exclusions = unname(first_match(positive_hit)),
+    excluded_from = matched_names(positive_hit & exclusion_hit),
+    # NA-safe: an exclusion can also turn an assigned term into an unassigned one
+    exclusion_changed = coalesce(category, "<none>") !=
+      coalesce(category_without_exclusions, "<none>"),
+    match_type = case_when(
+      n_match == 0 ~ "none",
+      n_match == 1 ~ "single",
+      n_match_specific >= 2 ~ "multiple: order decided",
+      .default = "multiple: specific plus catch-all"
+    )
+  )
+
+# A "specific plus catch-all" multiple match must include Development and
+# Differentiation, and an exclusion can only change a term it caught
+stopifnot(
+  with(term_rules, all(matches_catch_all[match_type == "multiple: specific plus catch-all"])),
+  with(term_rules, all(excluded_from[exclusion_changed] != ""))
+)
+
+write_rds(term_rules, here("pathway_analysis/06_go_hierarchy/output/category_rule_terms.rds"))
+```
+
+## Rule-match counts
+
+The counts quoted in the response letter (R2.4 and Appendix E): single, multiple and no matches; the split of the multiple matches; the exclusions; and how many of the 22 categories were assigned, or matched at all, at each threshold.
+
+```{r}
+#| label: rule-counts
+
+categories_never <- function(top, hit_matrix) {
+  in_top <- terms$top_n == top
+  used <- colSums(hit_matrix[in_top, , drop = FALSE]) > 0
+  paste(rules$category[!used], collapse = "; ")
+}
+
+rule_counts <- term_rules |>
+  summarise(
+    n_terms = n(),
+    n_single = sum(match_type == "single", na.rm = TRUE),
+    n_multiple = sum(n_match > 1, na.rm = TRUE),
+    n_none = sum(match_type == "none", na.rm = TRUE),
+    n_multiple_specific_plus_catch_all = sum(match_type == "multiple: specific plus catch-all", na.rm = TRUE),
+    n_multiple_order_decided = sum(match_type == "multiple: order decided", na.rm = TRUE),
+    n_hit_exclusion = sum(excluded_from != "", na.rm = TRUE),
+    n_exclusion_changed = sum(exclusion_changed, na.rm = TRUE),
+    n_assigned = sum(!is.na(category), na.rm = TRUE),
+    n_categories_assigned = n_distinct(category, na.rm = TRUE),
+    .by = top_n
+  ) |>
+  mutate(
+    categories_never_assigned = map_chr(top_n, \(t) {
+      used <- unique(na.omit(term_rules$category[term_rules$top_n == t]))
+      paste(setdiff(rules$category, used), collapse = "; ")
+    }),
+    categories_never_matched = map_chr(top_n, \(t) categories_never(t, rule_hit)),
+    categories_never_positive = map_chr(top_n, \(t) categories_never(t, positive_hit))
+  )
+
+stopifnot(
+  with(rule_counts, all(n_single + n_multiple + n_none == n_terms)),
+  with(rule_counts, all(n_multiple_specific_plus_catch_all + n_multiple_order_decided == n_multiple)),
+  with(rule_counts, all(n_assigned == n_terms - n_none))
+)
+
+rule_counts |>
+  pivot_longer(-top_n, names_to = "count", values_transform = as.character) |>
+  pivot_wider(names_from = top_n, names_prefix = "top_") |>
+  knitr::kable(caption = "Rule-match counts per threshold")
+```
+
+At the top 1,000 CpG sites, `r rule_counts$n_terms[1]` terms: `r rule_counts$n_single[1]` matched one rule, `r rule_counts$n_multiple[1]` more than one (`r rule_counts$n_multiple_specific_plus_catch_all[1]` one specific category plus Development and Differentiation, `r rule_counts$n_multiple_order_decided[1]` decided by the order between specific categories) and `r rule_counts$n_none[1]` none; the exclusions changed `r rule_counts$n_exclusion_changed[1]` assignment(s). At the top 2,000: `r rule_counts$n_terms[2]` terms, `r rule_counts$n_single[2]` / `r rule_counts$n_multiple[2]` (`r rule_counts$n_multiple_specific_plus_catch_all[2]` + `r rule_counts$n_multiple_order_decided[2]`) / `r rule_counts$n_none[2]`, with `r rule_counts$n_exclusion_changed[2]` assignment(s) changed by the exclusions.
+
+### Multiple matches decided between specific categories
+
+The terms for which the rule order chose between two or more specific categories (Appendix E lists those at the top 1,000).
+
+```{r}
+#| label: order-decided
+
+term_rules |>
+  dplyr::filter(match_type == "multiple: order decided") |>
+  select(top_n, condition, Description, matched_rules, category) |>
+  arrange(top_n, condition, Description) |>
+  knitr::kable(caption = "Terms whose category was decided by the rule order between specific categories")
+```
+
+### Terms caught by an exclusion
+
+Every term whose positive pattern matched a rule that also excluded it, and whether that changed the term's final category.
+
+```{r}
+#| label: exclusions
+
+term_rules |>
+  dplyr::filter(excluded_from != "") |>
+  select(top_n, condition, Description, excluded_from, category_without_exclusions, category, exclusion_changed) |>
+  arrange(top_n, condition, Description) |>
+  knitr::kable(caption = "Terms caught by an exclusion rule")
+```
+
+### Unassigned terms
+
+Terms that matched no rule and so carry no category.
+
+```{r}
+#| label: unassigned
+
+term_rules |>
+  dplyr::filter(match_type == "none") |>
+  select(top_n, condition, ID, Description) |>
+  arrange(top_n, condition, Description) |>
+  knitr::kable(caption = "Transition-specific terms that matched no rule")
+```
+
+## Counts by group
+
+Per group and threshold: the transition-specific terms, how many received a category and how many did not, and the Immune Response count. The number assigned is what the submitted Data S7 and S8 marked `transition_specific = "Yes"`, because `extended_data/03_biofunc_to_excel.qmd` set that flag from whether a term had a category. The last column shows the Immune Response count if "neutrophil" were added to that rule's keywords, re-running the full first-match order (a counterfactual for decision 25; the rules are not changed).
+
+```{r}
+#| label: by-group
+
+immune_rule <- which(rules$category == "Immune Response")
+hit_with_neutrophil <- rule_hit
+hit_with_neutrophil[, immune_rule] <- str_detect(desc, str_c(rules$pattern[immune_rule], "|neutrophil")) &
+  !exclusion_hit[, immune_rule]
+category_with_neutrophil <- unname(first_match(hit_with_neutrophil))
+
+counts_by_group <- term_rules |>
+  mutate(category_with_neutrophil = category_with_neutrophil) |>
+  summarise(
+    n_terms = n(),
+    n_assigned = sum(!is.na(category), na.rm = TRUE),
+    n_unassigned = sum(is.na(category), na.rm = TRUE),
+    n_immune = sum(category %in% "Immune Response", na.rm = TRUE),
+    n_immune_if_neutrophil = sum(category_with_neutrophil %in% "Immune Response", na.rm = TRUE),
+    .by = c(top_n, condition)
+  ) |>
+  arrange(top_n, condition)
+
+counts_by_group |>
+  knitr::kable(caption = "Transition-specific terms, assigned and unassigned, by group")
+```
+
+## Category use
+
+How many terms each rule matched (as applied, with exclusions) and how many it was assigned, per threshold. A category matched but never assigned lost every term to an earlier rule.
+
+```{r}
+#| label: category-use
+
+category_use <- thresholds |>
+  map(\(t) {
+    in_top <- terms$top_n == t
+    tibble(
+      top_n = t,
+      rule = rules$rule,
+      category = rules$category,
+      n_matched = colSums(rule_hit[in_top, , drop = FALSE]),
+      n_assigned = map_int(rules$category, \(cat) sum(assigned[in_top] %in% cat))
+    )
+  }) |>
+  list_rbind()
+
+category_use |>
+  pivot_wider(names_from = top_n, values_from = c(n_matched, n_assigned)) |>
+  knitr::kable(caption = "Terms matched and assigned per rule")
+```
+
+## Save the counts
+
+The threshold-level counts go to `category_rule_counts.rds`, with the by-group and per-category tables alongside; the per-term table was saved above as `category_rule_terms.rds`.
+
+```{r}
+#| label: save
+
+category_rule_counts <- list(
+  rules = rules,
+  counts = rule_counts,
+  by_group = counts_by_group,
+  by_category = category_use
+)
+
+write_rds(category_rule_counts, here("pathway_analysis/06_go_hierarchy/output/category_rule_counts.rds"))
+```

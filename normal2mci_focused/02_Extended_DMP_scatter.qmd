@@ -47,15 +47,20 @@ select_sig_cg(asso, 6) |>
 
 ## Function to display scientific notation
 
+`spearman_p_value()` keeps the default `cor.test()` P and re-runs it with the asymptotic t approximation only when the default returns 0; `spearman_p_label()` builds the label and prints "P < 1.0 × 10^-300^" only for true double-precision underflow.
+
 ```{r}
 #| output: false
 
 source(here("custom_func/display_scientific_notation.R"))
+source(here("custom_func/spearman_p_label.R"))
+source(here("custom_func/r_value_label.R"))
 
-# Test the function
+# Test the functions
 display_scientific_notation(1e-8)
 display_scientific_notation(0.3864971)
 display_scientific_notation(0)
+spearman_p_label(c(3.12e-126, 0))
 ```
 
 ## Collect data by p value cutoff
@@ -104,9 +109,10 @@ effect_size_for_scatter_plot <- function(.data, filter_condition, demcat1 = prev
     mutate(
       .by = pval_cutoff,
       cor_estimate = cor.test({{demcat1}}, {{demcat2}}, method = "spearman")$estimate,
-      cor_pval = cor.test({{demcat1}}, {{demcat2}}, method = "spearman")$p.value  %>% display_scientific_notation(),    
-      cor_estimate_label = glue("italic(r) == ~{round(cor_estimate, 2)}"),
-      cor_pval_label = glue("italic(P) == ~{cor_pval}")
+      # Never 0 unless the value underflows (R1.5/R2.7)
+      cor_pval = spearman_p_value({{demcat1}}, {{demcat2}}),
+      cor_estimate_label = r_value_label(cor_estimate),
+      cor_pval_label = spearman_p_label(cor_pval)
     )
 }
 
@@ -153,9 +159,11 @@ make_effect_size_scatter_plot <- function(.data, demcat1 = "prev", demcat2 = "no
     geom_hline(yintercept = 0, linetype = "dashed", color = "gray") +
     geom_vline(xintercept = 0, linetype = "dashed", color = "gray") +
     facet_wrap(~ Threshold, scales = "free", labeller = label_both) +
+    # Axis titles say "effect size" (= ΔM, the covariate-adjusted M-value difference from stable
+    # normal, defined in the legend; R2.7). The authors preferred "effect size" to "ΔM" (2026-10-09).
     labs(
-      x = glue("{dc}", dc = if (demcat1 == "prev") "Prevalent dementia" else glue("{demcat1} transition")),
-      y = glue("{dc}", dc = if (demcat2 == "prev") "Prevalent dementia" else glue("{demcat2} transition")),
+      x = glue("{dc} effect size", dc = if (demcat1 == "prev") "Prevalent dementia" else glue("{demcat1} transition")),
+      y = glue("{dc} effect size", dc = if (demcat2 == "prev") "Prevalent dementia" else glue("{demcat2} transition")),
       ) +
     theme(
       strip.text = element_textbox_simple(halign=0.5, lineheight = 0.1, margin = margin(8, 2, 2, 2)),

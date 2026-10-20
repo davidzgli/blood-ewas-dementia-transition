@@ -13,6 +13,8 @@ This document composes the supplementary pathway analysis figures for the manusc
 #| echo: false
 
 pacman::p_load(patchwork, ggtext, gt, ragg, install = FALSE)
+# The saved GO tables format adjusted P with format_p_value(), which gt calls when it renders them
+source(here("custom_func/p_value_label.R"))
 knitr::opts_chunk$set(dev = "ragg_png")
 ```
 
@@ -64,7 +66,7 @@ panel_b <- top2000_go_terms_upset + theme_main_fig()
 
 fig_sup_upset <- panel_a + panel_b +
   plot_layout(ncol = 1, guides = "keep", axes = "keep", axis_titles = "collect") +
-  plot_annotation(tag_levels = "a")
+  plot_annotation(tag_levels = "A")
 ```
 
 ```{r}

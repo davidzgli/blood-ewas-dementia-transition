@@ -12,6 +12,8 @@ Load necessary R packages for data manipulation, visualization, and GO analysis.
 #| warning: false
 
 pacman::p_load(readxl, gt, patchwork, install = FALSE)
+source(here("custom_func/p_value_label.R"))
+source(here("custom_func/go_term_weights.R"))
 
 conflicted::conflict_prefer_all("dplyr", quiet = TRUE)
 ```
@@ -70,9 +72,11 @@ glimpse(function_categorization)
 
 ## Significant GO terms
 
+Parent terms whose genes are identical to those of a significant child term are dropped (Rule 1, from `06_go_hierarchy/03_go_term_weights.qmd`), as in `03_transition_specific_GO_terms`.
+
 ```{r}
 significant_GO_terms <- all_GO_results |>
-  filter(p.adjust < 0.05)
+  filter(p.adjust < 0.05, !ID %in% read_go_duplicate_parents(top_n)$parent)
 
 glimpse(significant_GO_terms)
 ```
@@ -133,11 +137,9 @@ create_table <- function(condition, function_category_filter = NULL) {
   # Create and format GT table
   formatted_data |>
     gt() |>
-    # Format numeric columns
-    fmt_number(
-      columns = p.adjust, 
-      decimals = 3
-    ) |>
+    # Adjusted P in the house style (custom_func/p_value_label.R): three significant
+    # figures, a decimal at P >= 0.01 and scientific notation below
+    fmt(columns = p.adjust, fns = format_p_value) |>
     # Style headers and labels
     tab_style(
       style = cell_text(weight = "bold"),
@@ -150,7 +152,7 @@ create_table <- function(condition, function_category_filter = NULL) {
     cols_label(
       ID = "GO ID",
       Description = "Description", 
-      p.adjust = md("*P.adj*"),
+      p.adjust = md("Adjusted *P*"),
       function_category = "Function Category"
     ) |>
     # Add title and footnotes

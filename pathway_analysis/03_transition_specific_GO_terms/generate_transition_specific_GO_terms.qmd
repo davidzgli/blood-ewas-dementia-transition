@@ -18,6 +18,8 @@ Load necessary R packages for data manipulation, visualization, and GO analysis.
 pacman::p_load(ComplexUpset, install = FALSE)
 
 conflicted::conflict_prefer_all("dplyr", quiet = TRUE)
+
+source(here("custom_func/go_term_weights.R"))
 ```
 
 ## Set the top number of genes
@@ -44,6 +46,21 @@ all_results <- read_rds(here(glue("pathway_analysis/02_gene_ontology/output/top{
   ))
 
 glimpse(all_results)
+```
+
+## Drop duplicate parent terms (Rule 1)
+
+A significant parent term whose genes in the background set are identical to those of a significant child term has the same test in every group; it is dropped and the child kept (reviewer round, 2026-10-09). The map comes from `06_go_hierarchy/03_go_term_weights.qmd`, which runs right after the enrichment.
+
+```{r}
+#| label: drop-duplicate-parents
+
+duplicate_parents <- read_go_duplicate_parents(params$top_n)
+
+all_results <- all_results |>
+  filter(!ID %in% duplicate_parents$parent)
+
+glue("Dropped {nrow(duplicate_parents)} duplicate parent terms")
 ```
 
 ## Upset Plot function
@@ -128,7 +145,16 @@ glimpse(specific_terms)
 
 ## Count the number of specific terms in each condition.
 
+The set must equal the terms weighted in `06_go_hierarchy/03_go_term_weights.qmd`.
+
 ```{r}
+stopifnot(
+  setequal(
+    str_c(specific_terms$condition, specific_terms$ID),
+    with(read_go_term_weights(params$top_n), str_c(condition, ID))
+  )
+)
+
 specific_terms |>
   count(condition)
 ```

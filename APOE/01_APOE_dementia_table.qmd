@@ -69,11 +69,9 @@ chisq_result
 ### Cross-tabulation table
 
 ```{r}
-format_pvalue <- function(p) {
-  exponent <- floor(log10(p))
-  significand <- p / 10^exponent
-  sprintf("%.2f x 10<sup>%d</sup>", significand, exponent)
-}
+# P in the house style (custom_func/p_value_label.R), with a true multiplication sign and
+# minus sign (this note printed "4.18 x 10-13" with a letter x and a hyphen until 2026-10-08)
+source(here("custom_func/p_value_label.R"))
 
 apoe_dem_table <-
   um |>
@@ -86,7 +84,7 @@ apoe_dem_table <-
   bold_labels() |>
   as_gt() |>
   tab_source_note(
-    source_note = glue("Chi-square test: <i>P</i> = {format_pvalue(chisq_result$p_value)}") |> html()
+    source_note = glue("Chi-square test: {p_value_label(chisq_result$p_value, style = 'html')}") |> html()
   )
 
 apoe_dem_table

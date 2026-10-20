@@ -8,24 +8,38 @@
 #   - stamps continuous page numbers: title page blank, content 1, 2, 3, ...
 #     (the stale baked-in number stripping leaves behind is masked over)
 #
-# Handles four documents:
-#   ms/fig_tbl/main_figures.pdf          -> "Main Figures"
+# Handles three documents:
 #   ms/fig_tbl/supplementary_figures.pdf -> "Supplementary Figures"
-#   ms/fig_tbl/tables.pdf                -> "Tables and Supplementary Tables"
+#   ms/fig_tbl/supplementary_tables.pdf  -> "Supplementary Tables"
 #   ms/write-ms/dementia_EWAS.pdf        -> the manuscript title
 #
-# The first three are then concatenated into figures_and_tables.pdf, and are
-# also kept as separate files. The combined file is NOT renumbered: it is built
-# from the already-renumbered parts, so each section shows a blank divider then
-# content 1..N (per-section numbering).
+# The first two are concatenated into suppl_figures_tables.pdf and the combined
+# file is then renumbered continuously, so it paginates 1..N straight through
+# rather than restarting at the second divider. Each part is also kept.
 #
-# Outputs go to ms/submission/. Source PDFs are never modified.
+# THE BUNDLE SHAPE IS THE JOURNAL'S, NOT A PREFERENCE. Alzheimer's & Dementia
+# returned ADJ-D-26-02882 asking for every figure as its OWN file and for all
+# supplementary material in ONE file per file type. So main_figures.pdf is no
+# longer assembled here (ms/export_figures.py emits Figure1.pdf..Figure6.pdf
+# instead, and the legends now live at the end of the manuscript), Table 1 left
+# for ms/fig_tbl/main_tables.qmd -> main_tables.docx because the tables must be editable
+# text, and the old combined figures_and_tables.pdf is gone.
+#
+# Outputs go to ms/submission/ by default, under the inputs' own names -- exactly
+# the as-submitted behaviour. A revision build passes --out-dir ms/revision so
+# the submitted files are never overwritten.
+# --suffix is appended to the stem of EVERY output, the parts and the merged
+# file alike (dementia_EWAS<suffix>.pdf, suppl_figures_tables<suffix>.pdf).
+# Source PDFs are never modified.
 #
 # Pages to drop are DETECTED, not hardcoded, so that re-rendering the manuscript
 # (which shifts pagination whenever prose or the float list changes) cannot
 # silently leave a placeholder page in a submission file.
 #
-# Usage: bash ms/post_process_pdf.sh
+# Usage: bash ms/post_process_pdf.sh [--out-dir DIR] [--suffix STR]
+#   --out-dir DIR   where to write (default: ms/submission)
+#   --suffix STR    appended to each output's stem (default: none)
+#   e.g.  bash ms/post_process_pdf.sh --out-dir ms/revision
 
 set -euo pipefail
 
@@ -36,6 +50,62 @@ YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
 OUT_DIR="ms/submission"
+SUFFIX=""
+
+usage() {
+    cat <<'EOF'
+Usage: bash ms/post_process_pdf.sh [--out-dir DIR] [--suffix STR]
+
+Assemble journal-submission PDFs from the rendered outputs (run from the project root).
+
+  --out-dir DIR   output directory (default: ms/submission)
+  --suffix STR    appended to each output's stem, e.g. _clean -> dementia_EWAS_clean.pdf
+                  (default: none)
+  -h, --help      show this help and exit
+
+Both options also take the --opt=VALUE form, which a value starting with '-' needs.
+EOF
+}
+
+# Kept deliberately small: two options, both taking a value, plus --help. Anything
+# else is an error -- a mistyped option must not fall through to a default run that
+# writes into ms/submission/.
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --out-dir|--suffix)
+            # A following word that starts with '-' is taken to be the next option,
+            # not this one's value, so `--out-dir --suffix _x` cannot swallow
+            # --suffix. A value that really starts with '-' uses the = form.
+            if [[ $# -lt 2 ]]; then
+                echo -e "${RED}Error: $1 needs a value${NC}" >&2
+                usage >&2
+                exit 2
+            fi
+            if [[ "$2" == -* ]]; then
+                echo -e "${RED}Error: $1 needs a value, but got '$2', which looks like an option." \
+                        "If the value really starts with '-', write $1=$2${NC}" >&2
+                usage >&2
+                exit 2
+            fi
+            if [[ "$1" == "--out-dir" ]]; then OUT_DIR="$2"; else SUFFIX="$2"; fi
+            shift 2
+            ;;
+        --out-dir=*) OUT_DIR="${1#*=}"; shift ;;
+        --suffix=*)  SUFFIX="${1#*=}";  shift ;;
+        -h|--help)   usage; exit 0 ;;
+        *)
+            echo -e "${RED}Error: unknown argument: $1${NC}" >&2
+            usage >&2
+            exit 2
+            ;;
+    esac
+done
+
+[[ -n "$OUT_DIR" ]] || { echo -e "${RED}Error: --out-dir is empty${NC}" >&2; exit 2; }
+if [[ "$SUFFIX" == */* ]]; then
+    echo -e "${RED}Error: --suffix must not contain '/': $SUFFIX${NC}" >&2
+    exit 2
+fi
 
 # Counters
 TOTAL=0
@@ -43,7 +113,7 @@ SUCCESS=0
 FAILED=0
 
 # Outputs produced by THIS run. The merge step consults it so that a stale file
-# left in ms/submission/ by an earlier run can never be folded into the combined
+# left in $OUT_DIR by an earlier run can never be folded into the combined
 # PDF after its own assembly step has failed.
 ASSEMBLED=()
 
@@ -78,7 +148,13 @@ page_count() {
 # grep as a function or alias pointing at a different implementation, and the
 # exit status of `grep -qv` is not portable across them -- which silently
 # inverts the page tests below.
-PLACEHOLDER_RE='^(Figure|Table) [0-9]+$|^Supplementary (Fig\.|Table|Data) [0-9]+$'
+# This matches the float labels as RENDERED, so it is coupled to `crossref:` in
+# ms/_metadata.yml: change a reference-prefix there and this stops recognising the
+# placeholder pages, and the manuscript assembly fails with "no cross-reference
+# placeholder pages found". That is exactly what the 2026-08-25 A&D reformat did when
+# "Supplementary Fig. 1" became "Figure S1". Both forms are matched so the script also
+# works on a PDF rendered before that change.
+PLACEHOLDER_RE='^(Figure|Table) [0-9]+$|^(Figure|Table|Data) S[0-9]+$|^Supplementary (Fig\.|Table|Data) [0-9]+$'
 
 # Text of one page, with Typst's margin line numbers and the page number removed.
 page_text() {
@@ -101,7 +177,7 @@ is_toc_page() {
 #
 # Two conditions, not one. A real table page carries the table as an image and
 # so contributes only its own heading to the text layer -- indistinguishable
-# from a placeholder on the first test alone (tables.pdf pages 9-12 are exactly
+# from a placeholder on the first test alone (supplementary_tables.pdf pages 9-12 are
 # this). Placeholder pages stack many labels together: 7-14 each here, against
 # exactly 1 on a real page.
 is_placeholder_page() {
@@ -114,6 +190,35 @@ is_placeholder_page() {
     [[ "${n_labels:-0}" -ge 2 ]]
 }
 
+# The manuscript title, read from the YAML of the file that owns it. It is NOT
+# hardcoded here: it was, and on 2026-08-27 that copy was found still carrying the
+# 91-character Nature-round title three days after the A&D reformat cut the real one
+# to 79 characters. Nothing renders this script's title page except this script, so
+# the drift was invisible to `quarto render` and to every check that reads the
+# manuscript source -- it surfaced only by looking at page 1 of the assembled PDF.
+# Derive it; never copy it.
+manuscript_title() {
+    local qmd="ms/write-ms/dementia_EWAS.qmd" t
+    [[ -f "$qmd" ]] || { die "missing $qmd"; return 1; }
+    t=$(command sed -n 's/^title:[[:space:]]*"\(.*\)"[[:space:]]*$/\1/p' "$qmd" | head -1)
+    [[ -n "$t" ]] || { die "could not read title: from $qmd"; return 1; }
+    printf '%s' "$t"
+}
+
+# The body typeface, read from ms/_metadata.yml. The two Typst snippets below build
+# pages that no other tool renders, so a font they fail to set is a font nobody sees
+# until the assembled PDF is opened: both used Typst's default (Libertinus Serif)
+# while the manuscript body is Liberation Serif, A&D's Times-metric requirement. On
+# the title page that is the first thing an editor looks at. Derived, not copied,
+# for the same reason as the title.
+manuscript_font() {
+    local meta="ms/_metadata.yml" f
+    [[ -f "$meta" ]] || { die "missing $meta"; return 1; }
+    f=$(command sed -n 's/^[[:space:]]*mainfont:[[:space:]]*"\(.*\)"[[:space:]]*$/\1/p' "$meta" | head -1)
+    [[ -n "$f" ]] || { die "could not read mainfont: from $meta"; return 1; }
+    printf '%s' "$f"
+}
+
 # Build a one-page title PDF using the Typst binary bundled with Quarto -- the
 # same engine that produced the body, so fonts and metrics match.
 make_title_page() {
@@ -124,8 +229,12 @@ make_title_page() {
     local escaped=${text//\\/\\\\}
     escaped=${escaped//\"/\\\"}
 
+    local font
+    font=$(manuscript_font) || return 1
+
     cat >"$typ" <<EOF
 #set page(paper: "us-letter", margin: 1in)
+#set text(font: "$font")
 #set par(justify: false, leading: 0.8em)
 #set align(center + horizon)
 #let title = "$escaped"
@@ -180,10 +289,14 @@ assemble() {
 
     TOTAL=$((TOTAL + 1))
     base=$(basename "$src")
-    out="$OUT_DIR/$base"
+    out="$OUT_DIR/${base%.pdf}${SUFFIX}.pdf"
     echo -e "${YELLOW}[$TOTAL] Assembling:${NC} $base"
 
     [[ -f "$src" ]] || { fail "missing input: $src (run ms/render.sh first)"; return 0; }
+    # --out-dir/--suffix make it possible to aim the output at the input itself
+    # (e.g. --out-dir ms/write-ms). Refuse: source PDFs are never modified.
+    [[ "$(realpath -m "$out")" != "$(realpath -m "$src")" ]] ||
+        { fail "output $out would overwrite its own input"; return 0; }
 
     n=$(page_count "$src")
     [[ "$n" -gt 2 ]] || { fail "$base has only $n pages"; return 0; }
@@ -246,6 +359,13 @@ assemble() {
 # Concatenate finished submission PDFs into one file, leaving the parts in
 # place. No extra title page is added: each part already opens with its own,
 # which then reads as a section divider in the combined document.
+#
+# The result is renumbered as a whole. The parts arrive already stamped, so this
+# masks each part-local number and stamps the running one over it -- the same
+# white-mask mechanism renumber() uses everywhere, applied twice to the same
+# page. It matters because the merged file is now a SUBMITTED file (A&D wants one
+# supplementary file per type), and a supplement that restarts at 1 halfway
+# through reads as two documents stapled together.
 was_assembled() {
     local target="$1" f
     for f in ${ASSEMBLED[@]+"${ASSEMBLED[@]}"}; do
@@ -279,7 +399,10 @@ merge() {
     [[ "$n" -eq "$total" ]] ||
         { fail "merged page count $n does not equal the sum of the parts ($total)"; return 0; }
 
-    echo "    $total pages total"
+    renumber "$out" ||
+        { fail "could not renumber $(basename "$out")"; return 0; }
+
+    echo "    $total pages total, renumbered 1..$((total - 1)) after the cover"
     echo -e "${GREEN}    Done${NC} $out"
     SUCCESS=$((SUCCESS + 1))
 }
@@ -314,8 +437,11 @@ renumber() {
     # pages 2..T carry the footer mask plus the fresh number k-1. margin:0pt so
     # `place` is page-absolute; no `$`/backtick in the body, so the unquoted
     # heredoc leaves the Typst verbatim (only $T is expanded).
+    ov=$(manuscript_font) || return 1
+
     cat >"$typ" <<EOF
 #set page(paper: "us-letter", margin: 0pt, fill: none)
+#set text(font: "$ov")
 #let total = $T
 #for k in range(1, total + 1) {
   if k > 1 { pagebreak(weak: false) }
@@ -362,23 +488,21 @@ mkdir -p "$OUT_DIR"
 echo "Starting post-processing..."
 echo ""
 
-echo "--- Figures and tables ---"
-assemble "ms/fig_tbl/main_figures.pdf"          "Main Figures"                    float
-assemble "ms/fig_tbl/supplementary_figures.pdf" "Supplementary Figures"           float
-assemble "ms/fig_tbl/tables.pdf"                "Tables and Supplementary Tables" float
+echo "--- Supplementary figures and tables ---"
+assemble "ms/fig_tbl/supplementary_figures.pdf" "Supplementary Figures" float
+assemble "ms/fig_tbl/supplementary_tables.pdf"  "Supplementary Tables"  float
 
 echo ""
-echo "--- Combined figures and tables ---"
-merge "figures_and_tables.pdf" \
-    "$OUT_DIR/main_figures.pdf" \
-    "$OUT_DIR/supplementary_figures.pdf" \
-    "$OUT_DIR/tables.pdf"
+echo "--- Combined supplementary file ---"
+merge "suppl_figures_tables${SUFFIX}.pdf" \
+    "$OUT_DIR/supplementary_figures${SUFFIX}.pdf" \
+    "$OUT_DIR/supplementary_tables${SUFFIX}.pdf"
 
 echo ""
 echo "--- Manuscript text ---"
-assemble "ms/write-ms/dementia_EWAS.pdf" \
-    "Blood DNA methylation traces an epigenetic trajectory across stages of dementia progression" \
-    manuscript 18pt
+MS_TITLE=$(manuscript_title) || { echo -e "${RED}Error: cannot determine the manuscript title${NC}"; exit 1; }
+echo "    title read from ms/write-ms/dementia_EWAS.qmd (${#MS_TITLE} characters)"
+assemble "ms/write-ms/dementia_EWAS.pdf" "$MS_TITLE" manuscript 18pt
 
 echo ""
 echo "========================================"
@@ -394,5 +518,5 @@ else
     echo -e "${GREEN}All submission PDFs assembled!${NC}"
     echo ""
     echo "Output location:"
-    echo "  - $OUT_DIR/*.pdf"
+    echo "  - $OUT_DIR/*${SUFFIX}.pdf"
 fi

@@ -127,8 +127,12 @@ make_line_plot_with_text <- function(.data, path_text_size = 3, demcat_text_size
       hjust = 0.5, vjust = 0.5, inherit.aes = FALSE, size = demcat_text_size, angle = 0
     ) +
     scale_color_discrete_qualitative(palette = "Dark 3") +
-    labs( x = "-log10(p value) cutoff", y = "Spearman correlation") +
-    theme(legend.position = "none")
+    # Threshold t keeps CpG sites with P < 10^-t in at least one contrast; t = 0 applies no filter (R1.6).
+    # Markdown, not plotmath: theme_main_fig() draws axis titles with element_markdown(), which prints
+    # an expression as its source; setting the element here also renders it where that theme is not applied.
+    # gridtext drops ordinary (and no-break) spaces after </sub>, so a thin space (U+2009) separates "P"
+    labs(x = "−log<sub>10</sub> *P* threshold (0 = all CpG sites)", y = "Spearman correlation") +
+    theme(legend.position = "none", axis.title.x = ggtext::element_markdown())
 }
 
 

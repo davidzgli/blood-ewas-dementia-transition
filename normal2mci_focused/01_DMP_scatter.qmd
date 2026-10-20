@@ -41,15 +41,20 @@ glimpse(es)
 
 ## Function to display scientific notation
 
+`spearman_p_value()` keeps the default `cor.test()` P and re-runs it with the asymptotic t approximation only when the default returns 0; `spearman_p_label()` builds the label and prints "P < 1.0 × 10^-300^" only for true double-precision underflow.
+
 ```{r}
 #| output: false
 
 
 source(here("custom_func/display_scientific_notation.R"))
+source(here("custom_func/spearman_p_label.R"))
+source(here("custom_func/r_value_label.R"))
 
-# Test the function
+# Test the functions
 display_scientific_notation(1e-8)
 display_scientific_notation(0.3864971)
+spearman_p_label(c(3.12e-126, 0))
 ```
 
 ## Make a data preparation function
@@ -66,13 +71,14 @@ effect_size_for_scatter_plot <- function(.data, demcat_of_interest = normal2inci
     mutate(
       .by = demcat,
       cor_estimate = cor.test(es, {{demcat_of_interest}}, method = "spearman")$estimate,
-      cor_pval = cor.test(es, {{demcat_of_interest}}, method = "spearman")$p.value %>% display_scientific_notation(),
+      # Never 0 unless the value underflows (R1.5/R2.7)
+      cor_pval = spearman_p_value(es, {{demcat_of_interest}}),
       # cor_label = sprintf("r = %0.2f; p = %0.0f", cor, cor_pval)
       # cor_label = glue(
         # "atop(paste(phantom(p)~'r = {scales::label_number(style_negative='hyphen', accuracy=0.01)(cor)}'), paste(phantom(r)~'p = {round(cor_pval, 3)}'))"
       # )
-      cor_estimate_label = glue("italic(r) == ~{round(cor_estimate, 2)}"),
-      cor_pval_label = glue("italic(P) == ~{cor_pval}")
+      cor_estimate_label = r_value_label(cor_estimate),
+      cor_pval_label = spearman_p_label(cor_pval)
     )
 }
 
@@ -107,7 +113,9 @@ make_effect_size_scatter_plot <- function(.data, demcat_of_interest = "prev", si
     # Show a light gray dashed line at x = 0 and y = 0
     geom_hline(yintercept = 0, linetype = "dashed", color = "gray") +
     geom_vline(xintercept = 0, linetype = "dashed", color = "gray") +
-    labs(x = glue("{dc}", dc = if (demcat_of_interest == "prev") "Prevalent dementia" else glue("{demcat_of_interest} transition")), y = "Other transitions")
+    # Axis titles say "effect size" (= ΔM, the covariate-adjusted M-value difference from stable
+    # normal, defined in the legend; R2.7). The authors preferred "effect size" to "ΔM" (2026-10-09).
+    labs(x = glue("{dc} effect size", dc = if (demcat_of_interest == "prev") "Prevalent dementia" else glue("{demcat_of_interest} transition")), y = "Other transitions effect size")
 }
 
 # Test the function

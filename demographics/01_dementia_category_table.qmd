@@ -9,7 +9,7 @@ editor_options:
 #| label: load-packages
 #| echo: false
 
-pacman::p_load(gt, install = FALSE)
+pacman::p_load(gt, haven, install = FALSE)
 conflicted::conflict_prefer_all("dplyr", quiet = TRUE)
 ```
 
@@ -19,7 +19,7 @@ This document creates a dementia category table summarizing the distribution of 
 
 ## Introduction
 
-Create a dementia category table for the subjects used in the OLS association analysis. This notebook does not collapse the dementia categories. 
+Create a dementia category table for the subjects used in the OLS association analysis. This notebook does not collapse the dementia categories. The follow-up column and the numbers in its footnotes are computed from the analyzed participants (reviewer round, R1.3), with the same sources and rule as `demographics/04_followup_timeline.qmd`.
 
 
 ```{r}
@@ -53,9 +53,122 @@ dm
 
 ```
 
-## Refine dementia category tibble
+## Follow-up time
+
+The follow-up column was typed in for the submission from an extract of 2,496 participants, before the 5 with missing smoking status were excluded; it is now computed on the 2,491. The rule is the collaborator's `FU_DAYS`, as reproduced in `demographics/04_followup_timeline.qmd`: the time from AGES-I to dementia diagnosis, death or the end of surveillance, except for normal2mci and stable_mci participants who attended AGES-II, whose follow-up ends there; prevalent dementia has 0.
 
 ```{r}
+#| label: followup
+
+dem_cat <-
+  read_rds(here("data/collaborator_only/covariate_dementia_cat.rds")) |>
+  dplyr::select(subr_id18, time_in_days, in_ages2) |>
+  mutate(subr_id18 = tolower(as.character(subr_id18)))
+
+visits <-
+  read_sas(here("data/collaborator_only/rai_a1a2cogstat2016_jan2017_reva.sas7bdat")) |>
+  transmute(
+    subr_id18 = tolower(SUBR_ID18),
+    date_ages1 = BOOKDATE_IC,
+    days_ages1_to_ages2 = DAYS_AGES_AGESII,
+    date_end_surveillance = most_recent_fup_date
+  )
+
+followup <-
+  m |>
+  transmute(subr_id18 = tolower(as.character(subr_id18)), transition = as.character(dementia_ages1_eos)) |>
+  inner_join(dem_cat, by = "subr_id18") |>
+  left_join(visits, by = "subr_id18") |>
+  mutate(
+    attended_ages2 = in_ages2 == 1,
+    date_ages2 = date_ages1 + days_ages1_to_ages2,
+    fu_days = if_else(transition %in% c("normal2mci", "stable_mci") & attended_ages2, days_ages1_to_ages2, time_in_days)
+  )
+
+stopifnot(
+  nrow(followup) == nrow(m),
+  !anyNA(followup$fu_days),
+  !anyNA(followup$date_ages1),
+  all(!is.na(followup$days_ages1_to_ages2) == followup$attended_ages2)
+)
+
+days_per_year <- 365.25
+
+followup_by_group <-
+  followup |>
+  summarise(
+    followup_mean = round(mean(fu_days, na.rm = TRUE)),
+    followup_sd = round(sd(fu_days, na.rm = TRUE)),
+    surveillance_years = mean(time_in_days, na.rm = TRUE) / days_per_year,
+    .by = transition
+  )
+
+# Two rows differ from the submitted Table 1 (stable_normal 3,869 (773) and normal2incid
+# 2,730 (905), from 2,496 participants); the other four are unchanged.
+followup_expected <- tribble(
+  ~transition,     ~mean_expected, ~sd_expected,
+  "stable_normal", 3870,           774,
+  "normal2mci",    1921,           139,
+  "stable_mci",    2104,           1020,
+  "normal2incid",  2734,           906,
+  "mci2incid",     2239,           720,
+  "prev",          0,              0
+)
+
+followup_check <- inner_join(followup_by_group, followup_expected, by = "transition")
+
+stopifnot(
+  nrow(followup_check) == 6,
+  all(followup_check$followup_mean == followup_check$mean_expected),
+  all(followup_check$followup_sd == followup_check$sd_expected)
+)
+
+followup_by_group
+```
+
+The footnotes state the examination years, AGES-II attendance, the end of surveillance, the maximum follow-up and the dementia-surveillance time of the two MCI groups without dementia. Each is computed here and checked against the value the manuscript prints.
+
+```{r}
+#| label: footnote-facts
+
+surveillance_end <- unique(followup$date_end_surveillance)
+
+fn_facts <- list(
+  ages1_years = glue("{year(min(followup$date_ages1, na.rm = TRUE))}–{year(max(followup$date_ages1, na.rm = TRUE))}"),
+  ages2_years = glue("{year(min(followup$date_ages2, na.rm = TRUE))}–{year(max(followup$date_ages2, na.rm = TRUE))}"),
+  n_ages2 = scales::comma(sum(followup$attended_ages2, na.rm = TRUE)),
+  n_stable_mci_ages2 = sum(followup$attended_ages2[followup$transition == "stable_mci"], na.rm = TRUE),
+  surveillance_end = str_squish(format(surveillance_end, "%e %B %Y")),
+  fu_max_years = sprintf("%.1f", max(followup$fu_days, na.rm = TRUE) / days_per_year),
+  surveillance_normal2mci = sprintf("%.1f", followup_by_group$surveillance_years[followup_by_group$transition == "normal2mci"]),
+  surveillance_stable_mci = sprintf("%.1f", followup_by_group$surveillance_years[followup_by_group$transition == "stable_mci"])
+)
+
+stopifnot(
+  length(surveillance_end) == 1,
+  fn_facts$ages1_years == "2002–2006",
+  fn_facts$ages2_years == "2007–2011",
+  fn_facts$n_ages2 == "2,025",
+  fn_facts$n_stable_mci_ages2 == 26,
+  fn_facts$surveillance_end == "4 October 2015",
+  fn_facts$fu_max_years == "13.4",
+  fn_facts$surveillance_normal2mci == "10.0",
+  fn_facts$surveillance_stable_mci == "8.7",
+  # The footnote says normal2mci follow-up ends at the AGES-II examination, so every
+  # normal2mci participant must have attended it.
+  all(followup$attended_ages2[followup$transition == "normal2mci"])
+)
+
+fn_facts
+```
+
+## Refine dementia category tibble
+
+The Baseline and Follow-up status cells are assigned by position, so the order of `dm` is checked first; the follow-up columns are joined by group.
+
+```{r}
+stopifnot(identical(dm$dementia, c("stable_normal", "stable_mci", "normal2mci", "normal2incid", "mci2incid", "prev")))
+
 dm_refined <-
   dm |>
   # Add additional columns
@@ -63,18 +176,19 @@ dm_refined <-
     # Add an order column
     order = c(1, 3, 2, 4, 5, 6),
     # dementia_transition = if_else(dementia == "prev", "prevalent dementia", glue("{dementia} transition"))) |>
-    # Add baseline and follow-up dementia category
-    Baseline = c("normal", "mci", "normal", "normal", "mci", "demented"),
-    Followup = c("normal", "mci", "mci", "incid", "incid", "demented"),
-    # Add follow-up time (days) - order: stable_normal, stable_mci, normal2mci, normal2incid, mci2incid, prev
-    followup_mean = c(3869, 2104, 1921, 2730, 2239, 0),
-    followup_sd = c(773, 1020, 139, 905, 720, 0)
+    # Add baseline and follow-up dementia category - order: stable_normal, stable_mci, normal2mci, normal2incid, mci2incid, prev
+    Baseline = c("normal", "mci", "normal", "normal", "mci", "dementia"),
+    Followup = c("normal", "mci", "mci", "incid", "incid", "dementia")
   ) |>
+  # Add follow-up time (days), computed above
+  left_join(followup_by_group |> dplyr::select(dementia = transition, followup_mean, followup_sd), by = "dementia") |>
   # Reorder the dementia column
   dplyr::arrange(order) |>
   rename(transition = dementia) |>
   relocate(transition, Baseline, Followup, .before = count) |>
   dplyr::select(-order)
+
+stopifnot(!anyNA(dm_refined$followup_mean), !anyNA(dm_refined$followup_sd))
 
 dm_refined
 ```
@@ -109,20 +223,33 @@ dm_base <-
  # Label columns
  cols_label(
    count = "N (%)",
-   followup_mean = "Followup days"
+   Followup = "Follow-up status",
+   followup_mean = "Follow-up, days"
  ) |>
- ## Add footnotes
- tab_footnote(footnote = md("Mean (SD);"),
+ ## Add footnotes (reviewer round, R1.3 and R1.7); the numbers come from the footnote-facts chunk
+ tab_footnote(footnote = md(glue(
+                "Mean (SD) from AGES-I, defined by group: stable_normal, to death or {fn_facts$surveillance_end}; ",
+                "normal2mci, to the AGES-II examination at which MCI was diagnosed; ",
+                "stable_mci, to AGES-II for the {fn_facts$n_stable_mci_ages2} who attended it, otherwise to death or {fn_facts$surveillance_end}; ",
+                "normal2incid and mci2incid, to dementia diagnosis; prev, none. Maximum {fn_facts$fu_max_years} years."
+              )),
               locations = cells_column_labels(columns = followup_mean)) |>
- tab_footnote(footnote = md("Follow-up time to incident dementia, death, or censor date, up to 13.4 years;"),
+ tab_footnote(footnote = md(glue(
+                "Cognitive status at the end of follow-up. MCI was assessed only at AGES-I (baseline, {fn_facts$ages1_years}) ",
+                "and AGES-II ({fn_facts$ages2_years}); ",
+                "dementia was also ascertained from records to {fn_facts$surveillance_end} (Figure S1)."
+              )),
               locations = cells_column_labels(columns = Followup)) |>
- tab_footnote(footnote = md("Mild Cognitive Impairment;"),
+ tab_footnote(footnote = md("Mild cognitive impairment."),
               locations = cells_body(columns = Baseline, rows = 3)) |>
- tab_footnote(footnote = md("Incident dementia;"),
+ tab_footnote(footnote = md("Incident dementia."),
               locations = cells_body(columns = Followup, rows = 4)) |>
- tab_footnote(footnote = md("MCI was assessed at baseline and 5 years later, but no subjects of the two categories progressed to dementia during the whole followup;"),
+ tab_footnote(footnote = md(glue(
+                "No dementia was recorded in these groups during surveillance to death or {fn_facts$surveillance_end} ",
+                "(mean {fn_facts$surveillance_normal2mci} years for normal2mci and {fn_facts$surveillance_stable_mci} years for stable_mci)."
+              )),
               locations = cells_stub(c("normal2mci", "stable_mci"))) |>
-  tab_footnote(footnote = md("Prevalent dementia;"),
+  tab_footnote(footnote = md("Prevalent dementia."),
               locations = cells_stub("prev")) |>
  tab_options(footnotes.multiline = FALSE) |>
  ## Add grand summary for count only (merged column)

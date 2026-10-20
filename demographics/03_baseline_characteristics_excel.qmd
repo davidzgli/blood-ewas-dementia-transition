@@ -190,7 +190,9 @@ tbl |>
   gtsave(file = here("demographics/output/baseline_characteristics_by_dementia.png"), expand = 10, vwidth = 1200, vheight = 1600, zoom = 2)
 ```
 
-### Save the table without APOE as PNG file
+### Save the table without APOE (PNG and rds)
+
+The same table without APOE, with missing counts hidden, is saved as the PNG of submitted Table S2; its `tbl_summary` object is also saved as an rds, from which `demographics/05_table2_baseline.qmd` builds the Word Table 2.
 
 ```{r}
 baseline_clean |>
@@ -211,6 +213,10 @@ baseline_clean |>
   ) |>
   add_overall(last = FALSE) |>
   bold_labels() |>
+  # Also keep the tbl_summary object itself: demographics/05_table2_baseline.qmd
+  # builds the Word Table 2 from it. write_rds() returns its input, so the PNG
+  # below is produced exactly as before.
+  write_rds(file = here("demographics/output/baseline_characteristics_by_dementia_no_apoe.rds")) |>
   as_gt() |>
   gtsave(file = here("demographics/output/baseline_characteristics_by_dementia_no_apoe.png"), expand = 10, vwidth = 1200, vheight = 1400, zoom = 2)
 ```

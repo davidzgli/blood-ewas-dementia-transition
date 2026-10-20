@@ -12,11 +12,18 @@
 #   1. Gene comparison (top_n 1000, 2000)
 #   2. P-value with top genes (top_n 2000 hardcoded)
 #   3. GO enrichment (top_n 1000, 2000)
+#  3b. GO term recount (reviewer round; both thresholds): duplicate parents
+#      (Rule 1) and redundancy-aware weights (Rule 2), read by Steps 4-8 and by
+#      extended_data/03_biofunc_to_excel.qmd
 #   4. Transition-specific GO terms (top_n 1000, 2000)
 #   5. Assign function category (top_n 1000, 2000)
 #   6. Analyze function category (top_n 1000, 2000)
 #   7. Dementia progress graph
 #   8. Patch figures for pathway analysis (main + supplementary)
+#   9. GO hierarchy check (reviewer round; reads Steps 3-5 outputs;
+#      no manuscript float)
+#  10. GO category rule counts (reviewer round; reads Steps 4-5 outputs;
+#      no manuscript float)
 #
 # Usage: bash pathway_analysis/render.sh
 
@@ -116,6 +123,21 @@ mv pathway_analysis/02_gene_ontology/02_run_GO_enrichment.html \
 echo ""
 
 # ========================================
+# Step 3b: GO term recount (reviewer round)
+# ========================================
+# ADJ-D-26-02882, R2.9 (authors' decision, 2026-10-09): drop a significant parent
+# term whose genes are identical to those of a significant child (Rule 1), and
+# weight each term significant in only one group by the share of its immediate GO
+# relatives not significant in any group, its own or another (Rule 2; made
+# redundancy-aware on 2026-10-13). Reads only the Step 3
+# outputs; Steps 4-8 and extended_data/ read what it writes.
+echo "--- Step 3b: GO term recount (reads Step 3 outputs) ---"
+
+render_html "pathway_analysis/06_go_hierarchy/03_go_term_weights.qmd"
+
+echo ""
+
+# ========================================
 # Step 4: Transition-specific GO terms (top_n 1000, 2000)
 # ========================================
 echo "--- Step 4: Transition-specific GO terms (top_n 1000 & 2000) ---"
@@ -178,6 +200,37 @@ render_html "pathway_analysis/05_patch_fig_and_make_table/02_patch_main_pathway_
 render_html "pathway_analysis/05_patch_fig_and_make_table/03_patch_suppl_pathway_analysis.qmd"
 
 echo ""
+
+# ========================================
+# Step 9: GO hierarchy check (reviewer round)
+# ========================================
+# ADJ-D-26-02882, R2.9: does each transition-specific GO term have an ancestor
+# or descendant that is significant in another group? Reads only saved outputs,
+# with no enrichment re-run: top{1000,2000}_all_GO_results.rds (Step 3),
+# top{1000,2000}_condition_specific_GO_terms.csv (Step 4) and
+# top1000_condition_specific_GO_terms_auto_cat.xlsx (Step 5). No manuscript
+# float; its numbers are quoted in the response letter and the revised text.
+echo "--- Step 9: GO hierarchy check (reads Steps 3-5 outputs) ---"
+
+render_html "pathway_analysis/06_go_hierarchy/01_go_hierarchy_check.qmd"
+
+echo ""
+
+# ========================================
+# Step 10: GO category rule counts (reviewer round)
+# ========================================
+# ADJ-D-26-02882, R2.4: how often the ordered keyword rules in
+# custom_func/assign_biofunc_category.R matched one, several or no categories,
+# and how often the exclusions changed an assignment. Reads only saved outputs:
+# top{1000,2000}_condition_specific_GO_terms.csv (Step 4) and
+# top{1000,2000}_condition_specific_GO_terms_auto_cat.xlsx (Step 5). No
+# manuscript float; its numbers are quoted in the response letter (R2.4 and
+# Appendix E) and the revised Methods.
+echo "--- Step 10: GO category rule counts (reads Steps 4-5 outputs) ---"
+
+render_html "pathway_analysis/06_go_hierarchy/02_category_rule_counts.qmd"
+
+echo ""
 echo "========================================"
 echo "Render Complete"
 echo "========================================"
@@ -196,4 +249,5 @@ else
     echo "  - pathway_analysis/03_transition_specific_GO_terms/output/   (transition-specific GO)"
     echo "  - pathway_analysis/04_function_categorization/output/        (function categories)"
     echo "  - pathway_analysis/05_patch_fig_and_make_table/output/       (figures & tables)"
+    echo "  - pathway_analysis/06_go_hierarchy/output/                   (GO recount weights, hierarchy check and category rule counts, reviewer response)"
 fi

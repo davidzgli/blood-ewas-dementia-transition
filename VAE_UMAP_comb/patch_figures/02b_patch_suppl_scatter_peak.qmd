@@ -4,7 +4,7 @@ title: "Patch supplementary figures — scatter & peak plots and DPS line"
 
 ## Overview
 
-Compose supplementary scatter+peak trajectory figures for both VAE and UMAP lite pipelines. Generates multi-row panels for threshold 8 and threshold 7 at selected ranks, plus the combined DPS line plot.
+Compose supplementary scatter+peak trajectory figures for both VAE and UMAP lite pipelines. Generates multi-row panels For threshold 8 and threshold 7 at selected ranks, plus the combined DPS line plot.
 
 ```{r}
 #| label: load-packages
@@ -23,6 +23,28 @@ fs::dir_create(here("VAE_UMAP_comb/patch_figures/output"))
 ```
 
 ## Helper functions
+
+### Relabel the colour key
+
+The scatter plots carry the key "Dementia Status: Demented / Stable Normal" from `custom_func/make_faceted_scatter_and_contour_plot.R`, which codes every non-reference group "demented", including the two MCI groups. The key is relabelled here to "Group: Stable normal (reference) / Comparison group" (reviewer point R1.7), as in the main figure (01b); the colours are reused from the existing scale, so only the text changes.
+
+```{r}
+#| label: relabel-group-key
+
+relabel_group_key <- function(plot) {
+  key_colours <- plot$scales$get_scales("colour")$palette(2)
+  stopifnot(setequal(names(key_colours), c("stable_normal", "demented")))
+  # Replacing the existing colour scale is intended; silence ggplot's notice
+  suppressMessages(
+    plot +
+      scale_color_manual(
+        name = "Group",
+        values = key_colours,
+        labels = c(stable_normal = "Stable normal (reference)", demented = "Comparison group")
+      )
+  )
+}
+```
 
 ### Compose scatter+peak pairs
 
@@ -45,7 +67,7 @@ compose_scatter_peak <- function(method, threshold, ranks) {
       glue("{base_path}/threshold{threshold}/peak_rank{rank}.rds")
     )
 
-    scatter <- scatter + theme_main_fig() +
+    scatter <- relabel_group_key(scatter) + theme_main_fig() +
       theme(
         plot.title = element_blank(),
         plot.subtitle = element_blank(),
@@ -69,7 +91,7 @@ compose_scatter_peak <- function(method, threshold, ranks) {
   })
 
   wrap_plots(rows, ncol = 1) +
-    plot_annotation(tag_levels = "a")
+    plot_annotation(tag_levels = "A")
 }
 ```
 
@@ -84,6 +106,12 @@ Main figure (01b) shows ranks 01-02 at T8, so supplementary starts at rank 03.
 
 fig_vae_scatter_t8_p1 <- compose_scatter_peak("VAE", 8, c("03", "04", "05"))
 
+# ggrepel places the peak-plot labels at random (seed = NA in the shared
+# custom_func/plot_density_evolution.R); a fixed seed makes the layout reproducible.
+# Seed 1 was chosen by inspection (2026-10-07): in panel B of the VAE threshold-8 figure the
+# normal2mci label is no longer hidden (stable_normal and normal2incid still touch, as at
+# submission); the other panels are as crowded as at submission.
+set.seed(1)
 ggsave(here("VAE_UMAP_comb/patch_figures/output/fig_suppl_vae_scatter_t8_part1.png"),
        fig_vae_scatter_t8_p1,
        width = 6.5, height = 4.9, dpi = 600, bg = "white",
@@ -97,6 +125,12 @@ ggsave(here("VAE_UMAP_comb/patch_figures/output/fig_suppl_vae_scatter_t8_part1.p
 
 fig_vae_scatter_t8_p2 <- compose_scatter_peak("VAE", 8, c("06", "11", "14"))
 
+# ggrepel places the peak-plot labels at random (seed = NA in the shared
+# custom_func/plot_density_evolution.R); a fixed seed makes the layout reproducible.
+# Seed 1 was chosen by inspection (2026-10-07): in panel B of the VAE threshold-8 figure the
+# normal2mci label is no longer hidden (stable_normal and normal2incid still touch, as at
+# submission); the other panels are as crowded as at submission.
+set.seed(1)
 ggsave(here("VAE_UMAP_comb/patch_figures/output/fig_suppl_vae_scatter_t8_part2.png"),
        fig_vae_scatter_t8_p2,
        width = 6.5, height = 4.9, dpi = 600, bg = "white",
@@ -110,6 +144,12 @@ ggsave(here("VAE_UMAP_comb/patch_figures/output/fig_suppl_vae_scatter_t8_part2.p
 
 fig_vae_scatter_t7 <- compose_scatter_peak("VAE", 7, c("01", "06", "09"))
 
+# ggrepel places the peak-plot labels at random (seed = NA in the shared
+# custom_func/plot_density_evolution.R); a fixed seed makes the layout reproducible.
+# Seed 1 was chosen by inspection (2026-10-07): in panel B of the VAE threshold-8 figure the
+# normal2mci label is no longer hidden (stable_normal and normal2incid still touch, as at
+# submission); the other panels are as crowded as at submission.
+set.seed(1)
 ggsave(here("VAE_UMAP_comb/patch_figures/output/fig_suppl_vae_scatter_t7.png"),
        fig_vae_scatter_t7,
        width = 6.5, height = 4.9, dpi = 600, bg = "white",
@@ -125,6 +165,12 @@ ggsave(here("VAE_UMAP_comb/patch_figures/output/fig_suppl_vae_scatter_t7.png"),
 
 fig_umap_scatter_t8_p1 <- compose_scatter_peak("UMAP", 8, c("03", "04", "05"))
 
+# ggrepel places the peak-plot labels at random (seed = NA in the shared
+# custom_func/plot_density_evolution.R); a fixed seed makes the layout reproducible.
+# Seed 1 was chosen by inspection (2026-10-07): in panel B of the VAE threshold-8 figure the
+# normal2mci label is no longer hidden (stable_normal and normal2incid still touch, as at
+# submission); the other panels are as crowded as at submission.
+set.seed(1)
 ggsave(here("VAE_UMAP_comb/patch_figures/output/fig_suppl_umap_scatter_t8_part1.png"),
        fig_umap_scatter_t8_p1,
        width = 6.5, height = 4.9, dpi = 600, bg = "white",
@@ -138,6 +184,12 @@ ggsave(here("VAE_UMAP_comb/patch_figures/output/fig_suppl_umap_scatter_t8_part1.
 
 fig_umap_scatter_t8_p2 <- compose_scatter_peak("UMAP", 8, c("06", "07", "08"))
 
+# ggrepel places the peak-plot labels at random (seed = NA in the shared
+# custom_func/plot_density_evolution.R); a fixed seed makes the layout reproducible.
+# Seed 1 was chosen by inspection (2026-10-07): in panel B of the VAE threshold-8 figure the
+# normal2mci label is no longer hidden (stable_normal and normal2incid still touch, as at
+# submission); the other panels are as crowded as at submission.
+set.seed(1)
 ggsave(here("VAE_UMAP_comb/patch_figures/output/fig_suppl_umap_scatter_t8_part2.png"),
        fig_umap_scatter_t8_p2,
        width = 6.5, height = 4.9, dpi = 600, bg = "white",
@@ -151,6 +203,12 @@ ggsave(here("VAE_UMAP_comb/patch_figures/output/fig_suppl_umap_scatter_t8_part2.
 
 fig_umap_scatter_t7 <- compose_scatter_peak("UMAP", 7, c("01", "02", "03"))
 
+# ggrepel places the peak-plot labels at random (seed = NA in the shared
+# custom_func/plot_density_evolution.R); a fixed seed makes the layout reproducible.
+# Seed 1 was chosen by inspection (2026-10-07): in panel B of the VAE threshold-8 figure the
+# normal2mci label is no longer hidden (stable_normal and normal2incid still touch, as at
+# submission); the other panels are as crowded as at submission.
+set.seed(1)
 ggsave(here("VAE_UMAP_comb/patch_figures/output/fig_suppl_umap_scatter_t7.png"),
        fig_umap_scatter_t7,
        width = 6.5, height = 4.9, dpi = 600, bg = "white",

@@ -1,0 +1,313 @@
+---
+title: "Tables 1 and 2"
+format:
+  docx:
+    # Landscape body section: Table 2 (8.85 in wide) gets its own landscape page.
+    # Table 1 keeps a portrait page through the explicit section break after its
+    # legend (raw OpenXML below), which ends the first section as portrait.
+    reference-doc: ../reference/custom-reference-doc-landscape.docx
+---
+
+<!-- Tables 1 and 2 for the manuscript, as EDITABLE Word tables.
+
+     2026-10-08: renamed from ms/fig_tbl/table1.qmd (its build outputs are now
+     main_tables.docx and, in a revision build, ms/revision/main_tables_{marked,clean}.docx);
+     Table 2 no longer prints Missing rows (decision 45), so its legend no longer mentions
+     missing data.
+
+     2026-10-07 (reviewer round, R1.2 and R2.2): Table 2 (baseline characteristics by group,
+     merging the submitted Tables S1 and S2) is added after Table 1. It is built in
+     demographics/05_table2_baseline.qmd as a flextable with a FIXED layout for a landscape
+     page, and printed here from its saved object. The document's body section is landscape
+     (reference-doc above); a raw section break after the Table 1 legend keeps Table 1 on a
+     portrait page. In the marked build (REV_MODE=marked, exported by
+     ms/revision/build_revision.sh) Table 2 is shaded as a whole, because it is new, and
+     (since 2026-10-13, round 6) Table 1 is shaded cell by cell and footnote by footnote where it
+     differs from Table 1 as submitted (ms/submission/table1.docx; chunk `submitted`).
+     Table 1 now uses a fixed layout too: flextable's autofit layout writes no w:tblGrid,
+     which the Word schema requires (pandoc then read the table as rows without cells).
+
+     Original note (Table 1):
+
+     Alzheimer's & Dementia returned ADJ-D-26-02882 asking for tables "in editable
+     text format (.docx) as opposed to an image". Every table in this tree is a
+     gtsave() PNG, so the main table is rebuilt here from the gt object its producer
+     already saves alongside the PNG (demographics/01_dementia_category_table.qmd:190
+     writes both). Renders to DOCX ONLY.
+
+     The supplementary tables stay images and travel inside
+     ms/fig_tbl/supplementary_tables.qmd -> suppl_figures_tables.pdf, which the
+     journal's own bullet allows ("only one file of each type" explicitly lists .pdf).
+
+     WHY flextable AND NOT gt's OWN WORD WRITER. `gt::as_word()` produced a file Word
+     on macOS could not open properly (reported 2026-08-31). Two defects, both
+     confirmed in the emitted XML:
+       - `cell_text(size = 6)` in the producer is SIX PIXELS in gt's HTML/PNG world,
+         but as_word() passes the number straight through as `w:sz`, which is in
+         HALF-POINTS -- so the table body rendered at 3 pt.
+       - 38 elements were ISO-29500 *Strict* spellings (`w:start`/`w:end` inside
+         `w:tcBorders` and `w:tblCellMar`) and 35 `w:jc` values were `start`/`end`,
+         none of which are legal in the *transitional* schema this .docx declares.
+     flextable writes transitional, Word-native markup; verified after this render:
+     zero `w:start`/`w:end`, `w:jc` only left/right/center, one font size.
+
+     Rendering the gt as raw HTML and letting Quarto build the table was tried first
+     and does NOT work: Quarto's raw-HTML-table processing did not fire, and every
+     cell came out as its own paragraph with no <w:tbl> at all.
+
+     THE FLOAT-KIND HAZARD IS CONTAINED, NOT AVOIDED. Emitting a table from an R chunk
+     rather than as `![](png){#tbl-...}` changes the float's Quarto kind, and a kind
+     change is what once produced "Table S1...S11 with no Table 1". This document holds
+     two main tables, defined in the same order as their stubs in _pseudo_figures.qmd
+     (tbl-dementia-category, then tbl-baseline), and ms/_metadata.yml was not touched --
+     but confirm it renders "Table 1" and "Table 2".
+
+     The div wrapper (rather than a chunk `#| label:`) is what keeps the cross-reference
+     target. Quarto emits the wrapper as a <w:tbl> holding an ImageCaption paragraph
+     whose whole text is "Table 1"; ms/post_process_docx.py strips that, because the
+     hand-written legend below already opens with it. -->
+
+```{r}
+#| label: setup
+#| echo: false
+# tidyverse, here and stringr come from .Rprofile.
+pacman::p_load(gt, flextable, install = FALSE)
+
+g <- read_rds(here("demographics/output/dementia_category_table_base.rds"))
+
+# Everything below is DERIVED from that object -- cell values, column labels,
+# footnote texts and footnote marker numbers. Nothing is retyped, so a change in
+# demographics/01 reaches this table instead of silently disagreeing with the PNG
+# the slide deck shows. The stopifnot()s below fail loudly if an assumption breaks.
+
+# gt marks a footnoted cell by appending an HTML <sup>; extract_body() hands those
+# back verbatim, so the marker numbers gt itself assigned are readable here.
+MARK <- "<span[^>]*>\\s*<sup>(\\d+)</sup>\\s*</span>"
+mark_of  <- \(x) as.integer(str_match(x, MARK)[, 2])
+strip_of <- \(x) str_remove_all(x, MARK)
+
+body_raw <- gt::extract_body(g)
+boxhead  <- g[["_boxhead"]]
+
+# Visible columns, in display order: the stub first, then the default columns in
+# the order gt lays them out (`cols_move()` in the producer put followup_mean
+# before count, and _boxhead already reflects that).
+vis    <- boxhead[boxhead$type %in% c("stub", "default"), ]
+vis    <- vis[order(match(vis$type, c("stub", "default")), seq_len(nrow(vis))), ]
+cols   <- vis$var
+labels <- setNames(as.character(vis$column_label), cols)
+labels[[cols[1]]] <- ""          # the stub column has no header in the gt
+stopifnot("expected 5 visible columns" = length(cols) == 5)
+
+# extract_body() does NOT key the stub column by its variable name -- it renames it
+# to the literal "::rowname::". Reading it as `transition` silently returns NULL, so
+# the stub's own footnote markers (3 and 6) vanish and only the two data markers are
+# seen. Checked rather than assumed, because a gt release could rename it again.
+STUB_SRC <- "::rowname::"
+stopifnot("gt renamed the stub column in extract_body()" = STUB_SRC %in% names(body_raw))
+src_col <- \(cl) if (cl == cols[1]) STUB_SRC else cl
+```
+
+```{r}
+#| label: footnotes
+#| echo: false
+fns <- g[["_footnotes"]]
+
+# gt numbers footnotes by first appearance, header row before body. So the
+# column-label footnotes take 1..k in column order, and the body markers start at
+# k+1 -- which is checked, not assumed, against the numbers extract_body() emitted.
+hdr_fns <- fns[fns$locname == "columns_columns", ]
+hdr_fns <- hdr_fns[order(match(hdr_fns$colname, cols)), ]
+k       <- nrow(hdr_fns)
+hdr_mark <- setNames(seq_len(k), hdr_fns$colname)
+
+body_marks <- unlist(lapply(cols, \(cl) mark_of(body_raw[[src_col(cl)]])))
+body_marks <- sort(unique(body_marks[!is.na(body_marks)]))
+stopifnot(
+  "body footnote markers must start right after the header ones" =
+    min(body_marks) == k + 1,
+  "footnote markers must be contiguous from 1" =
+    identical(c(seq_len(k), body_marks), seq_len(k + length(body_marks)))
+)
+
+# marker number -> footnote text, for the block under the table.
+fn_text <- character(k + length(body_marks))
+fn_text[seq_len(k)] <- as.character(hdr_fns$footnotes)
+for (i in seq_len(nrow(fns))) {
+  loc <- fns$locname[i]
+  if (loc == "columns_columns") next
+  cl <- if (loc == "stub") cols[1] else as.character(fns$colname[i])
+  m  <- mark_of(body_raw[[src_col(cl)]][fns$rownum[i]])
+  if (!is.na(m)) fn_text[m] <- as.character(fns$footnotes[i])
+}
+stopifnot("every footnote marker must have text" = all(nzchar(fn_text)))
+```
+
+```{r}
+#| label: submitted
+#| echo: false
+# Marked build only (REV_MODE=marked, exported by ms/revision/build_revision.sh): Table 1 is
+# highlighted where it differs from Table 1 AS SUBMITTED (ms/submission/table1.docx, uploaded
+# 2026-09-01), cell by cell and footnote by footnote, so that the Marked Revision shows what
+# changed for the reviewers (added 2026-10-13, round 6). The clean build never reads that file.
+marked <- identical(Sys.getenv("REV_MODE"), "marked")
+cell_now <- \(txt, m) if (is.na(m)) txt else paste0(txt, m)
+fn_norm  <- \(s) str_remove(str_squish(s), "[;.]$")
+hl_header <- integer(0)
+hl_body   <- matrix(FALSE, nrow = 0, ncol = 0)
+fn_changed <- rep(FALSE, length(fn_text))
+
+if (marked) {
+  sub_path <- here("ms/submission/table1.docx")
+  stopifnot("the as-submitted Table 1 is needed for the marked build" = file.exists(sub_path))
+  sub_xml <- xml2::read_xml(unz(sub_path, "word/document.xml"))
+  ns <- xml2::xml_ns(sub_xml)
+  sub_tbl <- xml2::xml_find_all(sub_xml, "//w:tbl[count(w:tr) = 9]", ns)
+  stopifnot("submitted Table 1: expected one table of 9 rows" = length(sub_tbl) == 1)
+  sub_rows <- xml2::xml_find_all(sub_tbl[[1]], "w:tr", ns)
+  cell_txt <- \(tc) str_squish(paste(xml2::xml_text(xml2::xml_find_all(tc, ".//w:t", ns)),
+                                      collapse = ""))
+  sub_cells <- lapply(sub_rows[1:8], \(r) vapply(xml2::xml_find_all(r, "w:tc", ns), cell_txt, ""))
+  stopifnot("submitted Table 1: expected 5 cells in the header and body rows" =
+              all(lengths(sub_cells) == length(cols)))
+
+  # Its footnotes: the last row's runs, split at each superscript marker number.
+  sub_fn <- character(0)
+  for (r in xml2::xml_find_all(sub_rows[[9]], ".//w:r", ns)) {
+    t <- paste(xml2::xml_text(xml2::xml_find_all(r, "w:t", ns)), collapse = "")
+    is_mark <- length(xml2::xml_find_all(r, "w:rPr/w:vertAlign[@w:val='superscript']", ns)) > 0 &&
+      str_detect(t, "^\\s*\\d+\\s*$")
+    if (is_mark) {
+      sub_fn[as.integer(t)] <- ""
+    } else if (length(sub_fn) > 0) {
+      sub_fn[length(sub_fn)] <- paste0(sub_fn[length(sub_fn)], t)
+    }
+  }
+  stopifnot("submitted Table 1: footnote count differs" = length(sub_fn) == length(fn_text))
+
+  head_now <- vapply(cols, \(cl) cell_now(labels[[cl]], if (cl %in% names(hdr_mark))
+    hdr_mark[[cl]] else NA), "")
+  hl_header <- which(str_squish(head_now) != sub_cells[[1]])
+  body_now <- sapply(seq_along(cols), \(jj) vapply(seq_len(nrow(body_raw)), \(ii)
+    str_squish(cell_now(strip_of(body_raw[[src_col(cols[jj])]][ii]),
+                        mark_of(body_raw[[src_col(cols[jj])]][ii]))), ""))
+  stopifnot("submitted Table 1: body rows differ in number" =
+              nrow(body_now) == length(sub_cells) - 2)   # less the header and the total row
+  hl_body <- body_now != do.call(rbind, sub_cells[2:(nrow(body_now) + 1)])
+  fn_changed <- fn_norm(fn_text) != fn_norm(sub_fn)
+  message("Table 1 vs submitted: header cells ", paste(hl_header, collapse = ", "),
+          "; body cells ", sum(hl_body), "; footnotes ", paste(which(fn_changed), collapse = ", "))
+}
+```
+
+::: {#tbl-dementia-category}
+```{r}
+#| label: table
+#| echo: false
+# Plain text for the cells; the markers go back on as real superscript runs below.
+body <- as.data.frame(lapply(cols, \(cl) strip_of(body_raw[[src_col(cl)]])),
+                      col.names = cols, stringsAsFactors = FALSE)
+
+# The grand summary row. The producer sums the (unformatted) count column, so the
+# same sum is taken here rather than transcribing 2,491.
+total <- sum(g[["_data"]][["count"]], na.rm = TRUE)
+body[nrow(body) + 1, ] <- c("total", "—", "—", "—",
+                            format(total, big.mark = ","))
+n_body <- nrow(body) - 1L
+
+ft <- flextable(body) |>
+  set_header_labels(values = as.list(labels)) |>
+  font(fontname = "Times New Roman", part = "all") |>
+  fontsize(size = 10, part = "all") |>
+  bold(part = "header") |>
+  bold(j = 1, part = "body") |>
+  align(j = 1, align = "left", part = "all") |>
+  align(j = 2:5, align = "right", part = "all") |>
+  align(j = 2:3, align = "left", part = "all") |>
+  padding(padding.top = 2, padding.bottom = 2, part = "all") |>
+  border_remove() |>
+  hline_top(part = "header", border = officer::fp_border(width = 1)) |>
+  hline_bottom(part = "header", border = officer::fp_border(width = 0.5)) |>
+  hline(i = n_body, part = "body", border = officer::fp_border(width = 0.5)) |>
+  hline_bottom(part = "body", border = officer::fp_border(width = 1))
+
+# Re-attach gt's footnote markers as superscripts, header first then body.
+for (cl in names(hdr_mark)) {
+  ft <- compose(ft, j = which(cols == cl), part = "header",
+                value = as_paragraph(labels[[cl]], as_sup(as.character(hdr_mark[[cl]]))))
+}
+for (jj in seq_along(cols)) {
+  for (ii in seq_len(n_body)) {
+    m <- mark_of(body_raw[[src_col(cols[jj])]][ii])
+    if (is.na(m)) next
+    ft <- compose(ft, i = ii, j = jj, part = "body",
+                  value = as_paragraph(body[ii, jj], as_sup(as.character(m))))
+  }
+}
+
+# Marked build: highlight the cells that differ from the submitted table (chunk above).
+for (jj in hl_header) ft <- highlight(ft, j = jj, part = "header", color = "yellow")
+for (ii in seq_len(nrow(hl_body))) {
+  for (jj in which(hl_body[ii, ])) ft <- highlight(ft, i = ii, j = jj, part = "body", color = "yellow")
+}
+
+# One footnote block under the table, in marker order -- the same single wrapped
+# line the gt prints (tab_options(footnotes.multiline = FALSE) in the producer). In the
+# marked build, a footnote whose text changed since submission is highlighted.
+chunks <- list()
+for (m in seq_along(fn_text)) {
+  fn_mark <- as_sup(as.character(m))
+  fn_body <- paste0(" ", fn_text[m])
+  if (fn_changed[m]) {
+    fn_mark <- as_highlight(fn_mark, color = "yellow")
+    fn_body <- as_highlight(fn_body, color = "yellow")
+  }
+  chunks <- c(chunks, list(fn_mark, fn_body, " "))
+}
+ft <- ft |>
+  add_footer_lines(values = do.call(as_paragraph, chunks)) |>
+  fontsize(size = 8, part = "footer") |>
+  font(fontname = "Times New Roman", part = "footer") |>
+  align(align = "left", part = "footer")
+
+# Fixed layout with explicit widths (see the header note): one-line widths of the
+# header and body, scaled down to the portrait text width less the 108-twip side cell
+# margins of Quarto's one-cell float wrapper. The footer wraps, so it is left out.
+budget_in <- 6.5 - 2 * 108 / 1440
+w_in <- pmax(dim_pretty(ft, part = "header")$widths, dim_pretty(ft, part = "body")$widths)
+if (sum(w_in) > budget_in) w_in <- w_in * budget_in / sum(w_in)
+ft <- ft |>
+  width(width = w_in) |>
+  set_table_properties(layout = "fixed")
+
+ft
+```
+
+:::
+
+**[@tbl-dementia-category]** | **Dementia transition categories in the study population.** Distribution of 2,491 participants across six cognitive transition categories based on [the AGES-I and AGES-II examinations and on dementia surveillance to October 2015 (up to 13.4 years; Figure S1)]{.rev}. Categories include: stable normal ([participants with normal cognition at baseline who were not diagnosed with mild cognitive impairment (MCI) or dementia]{.rev}), normal2mci (transition from normal cognition to mild cognitive impairment), stable_mci ([participants with MCI at baseline who did not develop dementia throughout the follow-up]{.rev}), normal2incid ([normal cognition at AGES-I followed by incident dementia]{.rev}), mci2incid (transition from MCI to incident dementia), and prevalent dementia (dementia present at baseline). Follow-up time is presented as mean (standard deviation) [in days and is defined differently by group]{.rev}.
+
+```{=openxml}
+<w:p><w:pPr><w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="720" w:footer="720" w:gutter="0"/><w:cols w:space="720"/></w:sectPr></w:pPr></w:p>
+```
+
+::: {#tbl-baseline}
+```{r}
+#| label: table2
+#| echo: false
+# Built and checked in demographics/05_table2_baseline.qmd (every value recomputed from
+# the participant-level data there); printed here unchanged, except that the marked
+# build shades the whole table, which is new in the revision.
+t2 <- read_rds(here("demographics/output/table2_baseline_by_group.rds"))
+stopifnot("Table 2 must keep its fixed layout" = identical(t2$properties$layout, "fixed"))
+if (identical(Sys.getenv("REV_MODE"), "marked")) {
+  t2 <- highlight(t2, color = "yellow", part = "all")
+}
+t2
+```
+
+:::
+
+::: {.rev}
+**[@tbl-baseline]** | **Baseline characteristics by group.** Demographic, clinical and cognitive characteristics and estimated blood cell proportions at the AGES-Reykjavik baseline examination (2002–2006), when blood was drawn for DNA methylation, for all 2,491 participants and for each of the six groups defined in Table 1. The notes below the table describe the statistics and the tests.
+:::

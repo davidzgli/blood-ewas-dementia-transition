@@ -62,37 +62,115 @@ cat("Top 2000 function categories:\n")
 glimpse(top2000_function_categories)
 ```
 
+### Load the transition-specific GO terms
 
-## Merge GO results with function categories
+The terms significant in only one group, which define the `transition_specific` flag. The flag is set from this list rather than from whether a term received a category, because a term that matched no keyword rule is still significant in only one group.
+
+```{r}
+#| label: load-transition-specific-terms
+
+specific_path <- here("pathway_analysis/03_transition_specific_GO_terms/output")
+
+top1000_specific_terms <- read_csv(
+  file.path(specific_path, "top1000_condition_specific_GO_terms.csv"),
+  show_col_types = FALSE
+)
+top2000_specific_terms <- read_csv(
+  file.path(specific_path, "top2000_condition_specific_GO_terms.csv"),
+  show_col_types = FALSE
+)
+
+top1000_specific_terms |> count(condition)
+top2000_specific_terms |> count(condition)
+```
+
+
+### Load the duplicate parents and the specificity weights
+
+The authors' recount (2026-10-09, reviewer R2.9; `pathway_analysis/06_go_hierarchy/03_go_term_weights.qmd`): parent terms whose genes are identical to those of a significant child term (Rule 1) and the redundancy-aware weight of each term significant in only one group (Rule 2; since 2026-10-13 a relative significant in the term's own group lowers the weight as well).
+
+```{r}
+#| label: load-weights
+
+source(here("custom_func/go_term_weights.R"))
+
+duplicate_parents <- list(`1000` = read_go_duplicate_parents(1000), `2000` = read_go_duplicate_parents(2000))
+term_weights <- list(`1000` = read_go_term_weights(1000), `2000` = read_go_term_weights(2000))
+```
+
+## Merge GO results with function categories and weights
+
+Each significant term gets its category, whether it is significant in only one group, and its weight. A duplicate parent stays in the workbook, marked "Removed" and with the child it duplicates in `duplicate_of`, so the sheet remains the full list of significant terms.
 
 ```{r}
 #| label: merge-go-and-function-categories
 
-top1000_go_with_categories <- top1000_go |> 
-  left_join(select(top1000_function_categories, ID, biofunc_category = function_category), by = c("ID" = "ID")) |> 
-  # Is the function specific to a condition?
-  mutate(transition_specific = ifelse(is.na(biofunc_category), "No", "Yes")) |>
-  # Replace NA with ""
-  replace_na(list(biofunc_category = "")) |>
-  # Rename condition to transition
-  rename(transition = condition) |>
-  # Move biofunc_category to the end
-  relocate(biofunc_category, .after = last_col())
+add_specificity_columns <- function(go, function_categories, specific_terms, duplicates, weights) {
+  go |>
+    left_join(select(function_categories, ID, biofunc_category = function_category), by = "ID") |>
+    # Is the term significant in only one group?
+    left_join(
+      specific_terms |> distinct(ID, condition) |> mutate(transition_specific = "Yes"),
+      by = c("ID", "condition")
+    ) |>
+    left_join(select(duplicates, ID = parent, duplicate_of = child), by = "ID") |>
+    left_join(
+      select(
+        weights, condition, ID, n_relatives,
+        n_relatives_same_group = n_relatives_same, n_relatives_other_group = n_relatives_other,
+        n_relatives_significant, specificity_weight = w
+      ),
+      by = c("condition", "ID")
+    ) |>
+    mutate(
+      transition_specific = case_when(
+        !is.na(duplicate_of) ~ "Removed",
+        !is.na(transition_specific) ~ transition_specific,
+        .default = "No"
+      )
+    ) |>
+    replace_na(list(biofunc_category = "", duplicate_of = "")) |>
+    rename(transition = condition) |>
+    relocate(
+      transition_specific, duplicate_of, n_relatives, n_relatives_same_group, n_relatives_other_group,
+      n_relatives_significant, specificity_weight, biofunc_category,
+      .after = last_col()
+    )
+}
 
-top2000_go_with_categories <- top2000_go |> 
-  left_join(select(top2000_function_categories, ID, biofunc_category = function_category), by = c("ID" = "ID")) |> 
-  # Is the function specific to a condition?
-  mutate(transition_specific = ifelse(is.na(biofunc_category), "No", "Yes")) |>
-  # Replace NA with ""
-  replace_na(list(biofunc_category = "")) |>
-  # Rename condition to transition
-  rename(transition = condition) |>
-  # Move biofunc_category to the end
-  relocate(biofunc_category, .after = last_col())
+top1000_go_with_categories <- add_specificity_columns(
+  top1000_go, top1000_function_categories, top1000_specific_terms, duplicate_parents$`1000`, term_weights$`1000`
+)
+top2000_go_with_categories <- add_specificity_columns(
+  top2000_go, top2000_function_categories, top2000_specific_terms, duplicate_parents$`2000`, term_weights$`2000`
+)
 
-cat("Top 1000 GO results with function categories:\n")
+# Every transition-specific term is flagged exactly once and has a weight; every
+# duplicate parent is marked in each group where it is significant
+check_flags <- function(go_with_categories, specific_terms, duplicates, weights) {
+  is_yes <- go_with_categories$transition_specific == "Yes"
+  all(
+    sum(is_yes) == nrow(specific_terms),
+    sum(is_yes) == nrow(weights),
+    !anyNA(go_with_categories$specificity_weight[is_yes]),
+    all(is.na(go_with_categories$specificity_weight[!is_yes])),
+    setequal(go_with_categories$ID[go_with_categories$transition_specific == "Removed"], duplicates$parent)
+  )
+}
+
+stopifnot(
+  "top 1000: flags or weights do not match the transition-specific term list" =
+    check_flags(top1000_go_with_categories, top1000_specific_terms, duplicate_parents$`1000`, term_weights$`1000`),
+  "top 2000: flags or weights do not match the transition-specific term list" =
+    check_flags(top2000_go_with_categories, top2000_specific_terms, duplicate_parents$`2000`, term_weights$`2000`)
+)
+
+# Flags by group (the text reports 137 normal2mci terms at the top 1,000 and
+# 431 terms in all at the top 2,000)
+top1000_go_with_categories |> count(transition, transition_specific)
+top2000_go_with_categories |> count(transition, transition_specific)
+
 glimpse(top1000_go_with_categories)
-cat("Top 2000 GO results with function categories:\n")
 glimpse(top2000_go_with_categories)
 ```
 
@@ -111,21 +189,27 @@ wb <- wb_workbook() |>
 
 # Add GO results for top 1000 CG sites
 suppl_data_order <- 7
-top1000_legend <- glue("Supplementary Data {suppl_data_order}. Gene Ontology (GO) enrichment analysis results for the top 1000 CpG sites. The analysis was performed using the clusterProfiler R package. Only GO terms with adjusted p-value < 0.05 are shown. The columns represent: 
+top1000_legend <- glue("Data S{suppl_data_order}. Gene Ontology (GO) enrichment analysis results for the top 1000 CpG sites. The analysis was performed using the clusterProfiler R package. Only GO terms with adjusted P < 0.05 are shown. The columns represent: 
 - transition: dementia transition type
 - ID: Gene Ontology term identifier
 - Description: Biological process description of the GO term
-- GeneRatio: Number of genes from input list in this GO term divided by total number of input genes
+- GeneRatio: Number of genes from input list in this GO term divided by the number of input genes in the background, that is, with at least one GO biological process annotation
 - BgRatio: Number of genes in this GO term in the background divided by total number of background genes
 - RichFactor: Fraction of all known genes in this pathway found in the data (calculated as number of genes in pathway divided by number of genes in pathway background)
 - FoldEnrichment: How many times more frequent the pathway is in the gene list compared to background
 - zScore: Statistical measure of enrichment strength (higher absolute values indicate stronger enrichment)
-- pvalue: Raw p-value from the Fisher's exact test (lower values indicate stronger statistical significance)
-- p.adjust: P-value adjusted for multiple testing using Benjamini-Hochberg method (controls false discovery rate)
-- qvalue: Another type of adjusted p-value (similar to p.adjust but more conservative)
+- pvalue: Raw P value from the Fisher's exact test (lower values indicate stronger statistical significance)
+- p.adjust: P value adjusted for multiple testing using Benjamini-Hochberg method (controls false discovery rate)
+- qvalue: Another type of adjusted P value (similar to p.adjust but more conservative)
 - geneID: List of genes from the input that belong to this GO term (separated by '/')
 - Count: Number of genes from the input list in this GO term
-- transition_specific: Indicates whether the GO term is specific to a particular dementia transition ('Yes' or 'No')
+- transition_specific: significant in only one group ('Yes' or 'No'); 'Removed' for a parent term whose genes are identical to those of a significant child term, which was not counted (the child is named in duplicate_of)
+- duplicate_of: for a removed parent term, the GO identifier of the child term with the same genes
+- n_relatives: number of immediate relatives (parent and child terms, all relation types) of a transition-specific term in the GO graph
+- n_relatives_same_group: number of these relatives that are significant in the same group
+- n_relatives_other_group: number of these relatives that are significant in another group
+- n_relatives_significant: number of these relatives that are significant in any group (a relative significant in both the same and another group is counted once)
+- specificity_weight: redundancy-aware weight, 1 − n_relatives_significant / n_relatives (1 for a term with no significant immediate relative); the counts of transition-specific terms per group and per functional category are sums of these weights, rounded to whole numbers
 - biofunc_category: The biological function category assigned to the GO term (if transition-specific)") |> 
   as.character()
 
@@ -138,21 +222,27 @@ wb <- wb |>
 
 # Add GO results for top 2000 CG sites
 suppl_data_order <- 8
-top2000_legend <- glue("Supplementary Data {suppl_data_order}. Gene Ontology (GO) enrichment analysis results for the top 2000 CpG sites. The analysis was performed using the clusterProfiler R package. Only GO terms with adjusted p-value < 0.05 are shown. The columns represent: 
+top2000_legend <- glue("Data S{suppl_data_order}. Gene Ontology (GO) enrichment analysis results for the top 2000 CpG sites. The analysis was performed using the clusterProfiler R package. Only GO terms with adjusted P < 0.05 are shown. The columns represent: 
 - transition: dementia transition type
 - ID: Gene Ontology term identifier
 - Description: Biological process description of the GO term
-- GeneRatio: Number of genes from input list in this GO term divided by total number of input genes
+- GeneRatio: Number of genes from input list in this GO term divided by the number of input genes in the background, that is, with at least one GO biological process annotation
 - BgRatio: Number of genes in this GO term in the background divided by total number of background genes
 - RichFactor: Fraction of all known genes in this pathway found in the data (calculated as number of genes in pathway divided by number of genes in pathway background)
 - FoldEnrichment: How many times more frequent the pathway is in the gene list compared to background
 - zScore: Statistical measure of enrichment strength (higher absolute values indicate stronger enrichment)
-- pvalue: Raw p-value from the enrichment test (lower values indicate stronger statistical significance)
-- p.adjust: P-value adjusted for multiple testing using Benjamini-Hochberg method (controls false discovery rate)
-- qvalue: Another type of adjusted p-value (similar to p.adjust but more conservative)
+- pvalue: Raw P value from the Fisher's exact test (lower values indicate stronger statistical significance)
+- p.adjust: P value adjusted for multiple testing using Benjamini-Hochberg method (controls false discovery rate)
+- qvalue: Another type of adjusted P value (similar to p.adjust but more conservative)
 - geneID: List of genes from the input that belong to this GO term (separated by '/')
 - Count: Number of genes from the input list in this GO term
-- transition_specific: Indicates whether the GO term is specific to a particular dementia transition ('Yes' or 'No')
+- transition_specific: significant in only one group ('Yes' or 'No'); 'Removed' for a parent term whose genes are identical to those of a significant child term, which was not counted (the child is named in duplicate_of)
+- duplicate_of: for a removed parent term, the GO identifier of the child term with the same genes
+- n_relatives: number of immediate relatives (parent and child terms, all relation types) of a transition-specific term in the GO graph
+- n_relatives_same_group: number of these relatives that are significant in the same group
+- n_relatives_other_group: number of these relatives that are significant in another group
+- n_relatives_significant: number of these relatives that are significant in any group (a relative significant in both the same and another group is counted once)
+- specificity_weight: redundancy-aware weight, 1 − n_relatives_significant / n_relatives (1 for a term with no significant immediate relative); the counts of transition-specific terms per group and per functional category are sums of these weights, rounded to whole numbers
 - biofunc_category: The biological function category assigned to the GO term (if transition-specific)") |> 
   as.character()
 

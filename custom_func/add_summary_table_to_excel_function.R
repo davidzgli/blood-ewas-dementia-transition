@@ -128,7 +128,7 @@ add_summary_table_to_excel <- function(wb, df, sheet_name, start_cell = "U9") {
     )
   
   # Add explanatory note
-  note_text <- "Note: The number of significant CpG sites for each dementia transition were counted as the CpGs whose -log10 p-value > 8 (Bonferroni corrected significance level)."
+  note_text <- "Note: The number of significant CpG sites for each dementia transition were counted as the CpGs whose −log10 P > 8 (Bonferroni corrected significance level)."
   
   wb <- wb |>
     wb_merge_cells(

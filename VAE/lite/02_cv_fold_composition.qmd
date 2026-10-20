@@ -1,0 +1,395 @@
+---
+title: "Cross-Validation Fold Composition"
+subtitle: "Reviewer point R2.5: held-out folds of the VAE embedding, thresholds 7 & 8"
+---
+
+## Overview
+
+Reviewer 2 (point R2.5) asked how the cross-validation split of the VAE was made. This notebook rebuilds the five folds exactly as `VAE/lite/01_vae_embedding.qmd` does (same input files, same row order, same seed and the same `rsample::vfold_cv()` call), tabulates the held-out composition by fold and dementia group at both thresholds, and shows why stratification on `demcat` balanced only the two largest groups: under the default `pool = 0.1`, `rsample::make_strata()` pools every group forming less than 10% of the sample into the larger strata at random.
+
+No VAE is trained here and no existing output is read for anything but an identity check, so the published embeddings are untouched. The result is quoted in the response letter; no manuscript float reads it.
+
+```{r}
+#| label: load-packages
+
+# tidyverse, here and glue are pre-loaded by .Rprofile
+pacman::p_load(rsample, install = FALSE)
+
+fmt_count <- function(x) formatC(x, format = "d", big.mark = ",")
+```
+
+## Configuration
+
+The fold settings copied from `01_vae_embedding.qmd`: five folds, seed 123 set immediately before the split, thresholds 7 and 8.
+
+```{r}
+#| label: config
+
+N_FOLDS <- 5
+SEED <- 123
+THRESHOLDS <- c(7, 8)
+
+output_dir <- here("VAE/lite/output")
+fs::dir_create(output_dir)
+```
+
+## Load data
+
+The covariate-adjusted, scaled methylation matrices that the VAE was trained on, read with the same function body as the embedding notebook so that the row order, and therefore the fold assignment, is the same.
+
+### Input matrices
+
+One matrix per threshold; only `demcat` and the row order enter the split, but the dimensions are checked against those of the training run.
+
+```{r}
+#| label: load-data
+
+load_threshold_data <- function(threshold) {
+  file_path <- here(glue(
+    "data/collaborator_only/adjusted_meth/adjusted_methylation_scaled_nlog10p_gte_{threshold}.rds"
+  ))
+
+  data <- read_rds(file_path)
+
+  meth_matrix <- data |>
+    select(starts_with("cg")) |>
+    as.matrix()
+
+  list(
+    matrix = meth_matrix,
+    demcat = data$demcat,
+    subject_id = data$subject_id,
+    n_subjects = nrow(meth_matrix),
+    n_features = ncol(meth_matrix),
+    threshold = threshold
+  )
+}
+
+datasets <- map(THRESHOLDS, load_threshold_data) |>
+  set_names(glue("threshold_{THRESHOLDS}"))
+
+dataset_dims <- tibble(
+  threshold = THRESHOLDS,
+  n_subjects = unname(map_int(datasets, "n_subjects")),
+  n_features = unname(map_int(datasets, "n_features"))
+)
+
+stopifnot(
+  all(dataset_dims$n_subjects == 2491),
+  identical(dataset_dims$n_features, c(949L, 403L))
+)
+
+dataset_dims
+```
+
+### Identity check against the saved embeddings
+
+The embedding notebook averages the fold models with `summarise(.by = c(subject_id, demcat))`, which keeps the input row order, so its saved output must list the same participants and groups in the same order as the input read here. The check confirms that this notebook splits the rows the training run split.
+
+```{r}
+#| label: check-input
+
+walk(THRESHOLDS, \(threshold) {
+  ds <- datasets[[glue("threshold_{threshold}")]]
+  embedding <- read_rds(here(output_dir, glue("embedding_threshold_{threshold}.rds")))
+
+  stopifnot(
+    identical(as.character(embedding$subject_id), as.character(ds$subject_id)),
+    identical(as.character(embedding$demcat), as.character(ds$demcat)),
+    is.factor(ds$demcat),
+    !anyNA(ds$demcat)
+  )
+})
+
+stopifnot(identical(datasets$threshold_7$subject_id, datasets$threshold_8$subject_id))
+stopifnot(identical(datasets$threshold_7$demcat, datasets$threshold_8$demcat))
+
+levels(datasets$threshold_8$demcat)
+```
+
+Both inputs hold the same `r fmt_count(dataset_dims$n_subjects[1])` participants in the same order, matching the saved embeddings row for row.
+
+## Rebuild the folds
+
+The split is rebuilt with the embedding notebook's own call: `set.seed(123)` immediately before `vfold_cv()` on a two-column tibble of row index and `demcat`. Nothing else draws random numbers in between, so the earlier seeds and the TensorFlow seeds of that notebook do not affect the split.
+
+```{r}
+#| label: rebuild-folds
+
+rebuild_folds <- function(data) {
+  set.seed(SEED)
+  cv_splits <- vfold_cv(
+    tibble(idx = 1:nrow(data$matrix), demcat = data$demcat),
+    v = N_FOLDS,
+    strata = demcat
+  )
+
+  map(seq_len(N_FOLDS), \(fold_idx) {
+    fold_split <- cv_splits$splits[[fold_idx]]
+    train_idx <- as.integer(fold_split, data = "analysis")
+    test_idx <- as.integer(fold_split, data = "assessment")
+
+    stopifnot(length(intersect(train_idx, test_idx)) == 0)
+
+    tibble(
+      idx = test_idx,
+      subject_id = data$subject_id[test_idx],
+      demcat = data$demcat[test_idx],
+      fold = fold_idx,
+      n_train = length(train_idx)
+    )
+  }) |>
+    list_rbind() |>
+    mutate(threshold = data$threshold, .before = 1)
+}
+
+fold_assignment <- map(datasets, rebuild_folds) |>
+  list_rbind()
+
+# Every participant is held out exactly once at each threshold
+stopifnot(
+  fold_assignment |>
+    count(threshold, idx) |>
+    pull(n) |>
+    (\(n) all(n == 1))(),
+  all(count(fold_assignment, threshold)$n == 2491)
+)
+
+# The two thresholds share row order and demcat, so the folds must coincide
+folds_identical <- identical(
+  fold_assignment |> dplyr::filter(threshold == 7) |> arrange(idx) |> pull(fold),
+  fold_assignment |> dplyr::filter(threshold == 8) |> arrange(idx) |> pull(fold)
+)
+
+stopifnot(folds_identical)
+```
+
+The fold assignment is `r if (folds_identical) "identical" else "different"` at thresholds 7 and 8, as expected: the split depends only on the row order and `demcat`, not on the CpG columns.
+
+## Held-out composition
+
+Counts of each dementia group in each held-out fold, with the training size of the corresponding model. The last two rows give the group totals and the exact 20% share a perfectly stratified fold would hold.
+
+### Counts per fold and group
+
+Long-format counts at both thresholds; `.drop = FALSE` keeps a zero for any group absent from a fold.
+
+```{r}
+#| label: composition-long
+
+composition_long <- fold_assignment |>
+  count(threshold, fold, n_train, demcat, .drop = FALSE, name = "n_heldout")
+
+composition_long
+```
+
+### Composition table
+
+One row per held-out fold. The table is printed once, because the two thresholds give the same folds.
+
+```{r}
+#| label: composition-table
+
+group_levels <- levels(datasets$threshold_8$demcat)
+
+fold_rows <- composition_long |>
+  dplyr::filter(threshold == 8) |>
+  pivot_wider(names_from = demcat, values_from = n_heldout) |>
+  mutate(
+    n_heldout = rowSums(pick(all_of(group_levels)), na.rm = TRUE),
+    .after = n_train
+  ) |>
+  transmute(
+    row = as.character(fold),
+    n_train = as.numeric(n_train),
+    n_heldout = as.numeric(n_heldout),
+    across(all_of(group_levels), as.numeric)
+  )
+
+group_totals <- fold_rows |>
+  summarise(across(c(n_heldout, all_of(group_levels)), \(x) sum(x, na.rm = TRUE))) |>
+  mutate(row = "Group total", n_train = NA_real_)
+
+exact_share <- group_totals |>
+  mutate(
+    across(c(n_heldout, all_of(group_levels)), \(x) x / N_FOLDS),
+    row = "Exact 20% share"
+  )
+
+composition_table <- bind_rows(fold_rows, group_totals, exact_share) |>
+  relocate(row, n_train, n_heldout)
+
+stopifnot(group_totals$n_heldout == 2491)
+
+composition_table |>
+  knitr::kable(
+    col.names = c("Held-out fold", "Training n", "Held-out n", group_levels),
+    format.args = list(big.mark = ",")
+  )
+```
+
+### Range across folds
+
+The smallest and largest held-out count of each group across the five folds, as quoted in the response to R2.5.
+
+```{r}
+#| label: group-ranges
+
+group_ranges <- composition_long |>
+  dplyr::filter(threshold == 8) |>
+  summarise(
+    n_total = sum(n_heldout, na.rm = TRUE),
+    min_heldout = min(n_heldout, na.rm = TRUE),
+    max_heldout = max(n_heldout, na.rm = TRUE),
+    .by = demcat
+  )
+
+size_ranges <- fold_rows |>
+  summarise(
+    min_train = min(n_train, na.rm = TRUE),
+    max_train = max(n_train, na.rm = TRUE),
+    min_heldout = min(n_heldout, na.rm = TRUE),
+    max_heldout = max(n_heldout, na.rm = TRUE)
+  )
+
+group_ranges
+
+size_ranges
+```
+
+Training sets held `r fmt_count(size_ranges$min_train)`–`r fmt_count(size_ranges$max_train)` participants and held-out folds `r size_ranges$min_heldout`–`r size_ranges$max_heldout`.
+
+## Pooling rule
+
+Why stratification on `demcat` balanced only two groups. The rule is read from the installed rsample, not restated from its documentation.
+
+### Default pool and the make_strata source
+
+`vfold_cv()` passes `pool` to `make_strata()` unchanged; the embedding notebook does not set it, so the default applies. The source lines below are the ones that pool small groups: any level whose share of the sample is below `pool` is set to missing, and the missing entries are then drawn at random from the remaining levels.
+
+```{r}
+#| label: pool-rule
+
+rsample_version <- as.character(packageVersion("rsample"))
+default_pool <- eval(formals(rsample::vfold_cv)$pool)
+
+stopifnot(identical(eval(formals(rsample::make_strata)$pool), default_pool))
+
+make_strata_source <- deparse(body(rsample::make_strata))
+pooling_lines <- make_strata_source[
+  str_detect(make_strata_source, "pcts < pool|sample\\(levels\\(out\\)|out\\[is.na\\(x\\)\\]|num_miss <- ")
+] |>
+  str_trim()
+
+pooling_lines
+```
+
+With rsample `r rsample_version`, the default is pool = `r default_pool`.
+
+### Group shares
+
+Each group's share of the 2,491 participants, and whether it falls under the pool threshold.
+
+```{r}
+#| label: group-shares
+
+group_shares <- tibble(demcat = datasets$threshold_8$demcat) |>
+  count(demcat, name = "n") |>
+  mutate(
+    share = n / sum(n, na.rm = TRUE),
+    pooled = share < default_pool
+  )
+
+pooled_groups <- group_shares |>
+  dplyr::filter(pooled) |>
+  pull(demcat) |>
+  as.character()
+
+kept_groups <- group_shares |>
+  dplyr::filter(!pooled) |>
+  pull(demcat) |>
+  as.character()
+
+stopifnot(
+  setequal(kept_groups, c("stable_normal", "normal2incid")),
+  length(pooled_groups) == 4
+)
+
+group_shares
+```
+
+The four groups below 10% (`r paste(pooled_groups, collapse = ", ")`) were pooled; only `r paste(kept_groups, collapse = " and ")` formed strata.
+
+### Strata actually used
+
+`vfold_cv()` calls `make_strata()` as its first random draw, so the same seed reproduces the strata it used. Each pooled participant ends up in one of the two remaining strata; within each stratum the folds are then assigned evenly, so every stratum must differ by at most one participant across folds, which confirms the reconstruction.
+
+```{r}
+#| label: strata-used
+
+set.seed(SEED)
+strata_used <- make_strata(datasets$threshold_8$demcat, pool = default_pool)
+
+strata_by_group <- tibble(
+  stratum = strata_used,
+  demcat = datasets$threshold_8$demcat
+) |>
+  count(stratum, demcat, .drop = FALSE, name = "n") |>
+  pivot_wider(names_from = stratum, values_from = n)
+
+strata_by_fold <- tibble(
+  idx = seq_along(strata_used),
+  stratum = strata_used
+) |>
+  left_join(
+    fold_assignment |> dplyr::filter(threshold == 8) |> select(idx, fold),
+    by = "idx"
+  ) |>
+  count(stratum, fold, name = "n") |>
+  pivot_wider(names_from = fold, values_from = n, names_prefix = "fold_")
+
+stratum_spread <- strata_by_fold |>
+  rowwise() |>
+  mutate(spread = diff(range(c_across(starts_with("fold_")), na.rm = TRUE))) |>
+  ungroup()
+
+stopifnot(
+  setequal(levels(strata_used), kept_groups),
+  all(stratum_spread$spread <= 1)
+)
+
+strata_by_group
+
+strata_by_fold
+```
+
+Every pooled participant was placed in the stable_normal or normal2incid stratum, and each stratum is split evenly across the five folds (spread at most one). The groups themselves are therefore balanced only to the extent that their randomly allocated members happen to fall evenly.
+
+## Save
+
+The fold composition, the per-group ranges and the pooling evidence, with the settings that produced them.
+
+```{r}
+#| label: save
+
+cv_fold_composition <- list(
+  composition_long = composition_long,
+  composition_table = composition_table,
+  group_ranges = group_ranges,
+  size_ranges = size_ranges,
+  group_shares = group_shares,
+  strata_by_group = strata_by_group,
+  strata_by_fold = strata_by_fold,
+  folds_identical_across_thresholds = folds_identical,
+  settings = list(
+    seed = SEED,
+    v = N_FOLDS,
+    strata = "demcat",
+    pool = default_pool,
+    rsample_version = rsample_version,
+    thresholds = THRESHOLDS
+  )
+)
+
+write_rds(cv_fold_composition, here(output_dir, "cv_fold_composition.rds"))
+```

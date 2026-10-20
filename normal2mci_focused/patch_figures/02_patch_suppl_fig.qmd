@@ -60,7 +60,7 @@ sct_extended_DMP_suppl$normal2mci_vs_normal2incid <- rescale_layer_params(
 fig_sup_normal2incid_extended_DMP <- sct_extended_DMP_suppl$mci2incid_vs_normal2incid +
   sct_extended_DMP_suppl$normal2mci_vs_normal2incid +
   plot_layout(ncol = 1, guides = "collect", axes = "collect", axis_titles = "collect") +
-  plot_annotation(tag_levels = "a")
+  plot_annotation(tag_levels = "A")
 
 ggsave(here("normal2mci_focused/patch_figures/output/fig_sup_normal2incid_extended_DMP.png"),
        fig_sup_normal2incid_extended_DMP,
@@ -83,7 +83,7 @@ sct_extended_DMP_suppl$normal2mci_vs_mci2incid <- rescale_layer_params(
 fig_sup_mci2incid_extended_DMP <- sct_extended_DMP_suppl$prev_vs_mci2incid +
   sct_extended_DMP_suppl$normal2mci_vs_mci2incid +
   plot_layout(ncol = 1, guides = "collect", axes = "collect", axis_titles = "collect") +
-  plot_annotation(tag_levels = "a")
+  plot_annotation(tag_levels = "A")
 
 ggsave(here("normal2mci_focused/patch_figures/output/fig_sup_mci2incid_extended_DMP.png"),
        fig_sup_mci2incid_extended_DMP,

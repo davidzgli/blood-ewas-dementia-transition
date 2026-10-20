@@ -7,6 +7,7 @@ title: "Covariate Table"
 #| echo: false
 
 pacman::p_load(gtsummary, gt, install = FALSE)
+source(here("custom_func/p_value_label.R"))
 
 conflicted::conflict_prefer_all("dplyr", quiet = TRUE)
 ```
@@ -160,7 +161,9 @@ cg_site1
 model_1 <- glue( "{cg_site1} ~ dementia_transition + age + sex + smoking_status + Bcell + CD4T + CD8T + Eos + Mono + Neu + Mono") |> 
   as.formula()  |> 
   lm(data = d_clean) |> 
-  tbl_regression()
+  # P in the house style (custom_func/p_value_label.R), not gtsummary's 0.2 / 0.021 / <0.001
+  tbl_regression(pvalue_fun = format_p_value) |>
+  modify_header(p.value = "**_P_ value**")
 
 model_1
 ``` 
@@ -199,7 +202,9 @@ cg_site2
 model_2 <- glue( "{cg_site2} ~ dementia_transition + age + sex + smoking_status + Bcell + CD4T + CD8T + Eos + Mono + Neu + Mono") |> 
   as.formula()  |> 
   lm(data = d_clean) |> 
-  tbl_regression()
+  # P in the house style (custom_func/p_value_label.R), not gtsummary's 0.2 / 0.021 / <0.001
+  tbl_regression(pvalue_fun = format_p_value) |>
+  modify_header(p.value = "**_P_ value**")
 
 model_2
 ``` 
@@ -235,7 +240,9 @@ cg_site3
 model_3 <- glue( "{cg_site3} ~ dementia_transition + age + sex + smoking_status + Bcell + CD4T + CD8T + Eos + Mono + Neu + Mono") |> 
   as.formula()  |> 
   lm(data = d_clean) |> 
-  tbl_regression()
+  # P in the house style (custom_func/p_value_label.R), not gtsummary's 0.2 / 0.021 / <0.001
+  tbl_regression(pvalue_fun = format_p_value) |>
+  modify_header(p.value = "**_P_ value**")
 
 model_3
 ``` 

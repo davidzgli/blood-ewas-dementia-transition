@@ -1,6 +1,6 @@
 cff-version: 1.2.0
 message: "If you use this software or data, please cite the following."
-title: "Blood DNA methylation traces a continuous epigenetic trajectory across stages of dementia progression"
+title: "Blood DNA methylation traces an epigenetic trajectory across stages of dementia"
 abstract: >-
   Analysis code and manuscript sources for an epigenome-wide association study
   of blood DNA methylation and dementia progression in the AGES-Reykjavik

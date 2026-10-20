@@ -1,5 +1,5 @@
 ---
-title: "Patch main figure — scatter & peak plots (panels a–h)"
+title: "Patch main figure — scatter & peak plots (panels A–H)"
 ---
 
 ```{r}
@@ -11,7 +11,7 @@ pacman::p_load(patchwork, ggtext, install = FALSE)
 
 ## Introduction
 
-Compose 8 panels of scatter and peak plots into a standalone multi-panel figure. Panels a–d are scatter plots (VAE rank 1–2, UMAP rank 1–2) and panels e–h are peak plots (VAE rank 1–2, UMAP rank 1–2), all at threshold 8.
+Compose 8 panels of scatter and peak plots into a standalone multi-panel Figure. Panels A–D are scatter plots (VAE rank 1–2, UMAP rank 1–2) and panels E–H are peak plots (VAE rank 1–2, UMAP rank 1–2), all at threshold 8.
 
 ## Load the data
 
@@ -54,18 +54,40 @@ set_pub_geom_defaults()
 
 ## Compose the scatter & peak figure
 
+### Relabel the colour key
+
+The scatter plots carry the key "Dementia Status: Demented / Stable Normal" from `custom_func/make_faceted_scatter_and_contour_plot.R`, which codes every non-reference group "demented", including the two MCI groups. The key is relabelled here to "Group: Stable normal (reference) / Comparison group" (reviewer point R1.7); the colours are reused from the existing scale, so only the text changes.
+
+```{r}
+#| label: relabel-group-key
+
+relabel_group_key <- function(plot) {
+  key_colours <- plot$scales$get_scales("colour")$palette(2)
+  stopifnot(setequal(names(key_colours), c("stable_normal", "demented")))
+  # Replacing the existing colour scale is intended; silence ggplot's notice
+  suppressMessages(
+    plot +
+      scale_color_manual(
+        name = "Group",
+        values = key_colours,
+        labels = c(stable_normal = "Stable normal (reference)", demented = "Comparison group")
+      )
+  )
+}
+```
+
 ### Modify ggplot2 objects
 
 ```{r}
 
-# Scatter plots (panels a–d)
+# Scatter plots (panels A–D)
 scatter_main <- lst(
   a = scatter_a,
   b = scatter_b,
   c = scatter_c,
   d = scatter_d
 ) |>
-  map(~ .x + theme_main_fig() +
+  map(~ relabel_group_key(.x) + theme_main_fig() +
   theme(
     plot.title = element_blank(),
     axis.text.x = ggtext::element_markdown(angle = 30, hjust = 1, vjust = 1),
@@ -82,7 +104,7 @@ scatter_main$a <- scatter_main$a +
 scatter_main <- scatter_main |>
   map(~ rescale_layer_params(.x, size_scale = 0.5, linewidth_scale = 0.5))
 
-# Peak plots (panels e–h)
+# Peak plots (panels E–H)
 peak_main <- lst(
   e = peak_e,
   f = peak_f,
@@ -148,7 +170,7 @@ fig_scatter_peak <-
   peak_main$h +
   label_i + label_j + label_k + label_l +
   plot_layout(design = layout, guides = "auto", axes = "keep", axis_titles = "keep") +
-  plot_annotation(tag_levels = "a")
+  plot_annotation(tag_levels = "A")
 
 # Suppress tags on label panels (panels 9–12)
 for (i in 9:12) {

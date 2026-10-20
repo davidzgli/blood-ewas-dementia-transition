@@ -59,18 +59,24 @@ Compute the correlation between the stable_mci effect size and each other transi
 
 Correlations are computed on the full set of DMPs; the outlier filters applied further down affect the display only.
 
+*P* values are labelled by the shared Spearman label helper in the manuscript's house style (three significant figures, a decimal at *P* ≥ 0.01 and scientific notation below; custom_func/p_value_label.R). It never prints 0: it re-runs the test with the t approximation when the default returns 0, and prints "P < 1.0 × 10^-300^" only for true underflow.
+
 ```{r}
+source(here("custom_func/display_scientific_notation.R"))
+source(here("custom_func/spearman_p_label.R"))
+source(here("custom_func/r_value_label.R"))
+
 data_stable_mci_two_groups <-
   es_long |>
   filter(demcat != "stable_mci") |>
   mutate(
     .by = c(demcat, stable_mci_grp),
-    pval = cor.test(stable_mci, es, method = "spearman")$p.value,
+    pval = spearman_p_value(stable_mci, es),
     cor = cor.test(stable_mci, es, method = "spearman")$estimate
   ) |>
   # Only a comma separates the two values inside list(); plotmath needs it this way
   mutate(
-    label = glue("list(italic(r)=={round(cor, 2)}, italic(p)=={round(pval, 3)})")
+    label = glue("list({r_value_label(cor)}, {spearman_p_label(pval)})")
   ) |>
   mutate(
     vjust = case_when(
@@ -113,7 +119,9 @@ scatter_DMP <-
   geom_hline(yintercept = 0, linetype = "dashed", color = "gray") +
   geom_vline(xintercept = 0, linetype = "dashed", color = "gray") +
   facet_wrap(~ demcat, ncol = 2, scales = "free_y") +
-  labs(x = "Effect size of stable_mci", y = "Effect size of other dementia") +
+  # Axis titles say "effect size" (= ΔM, the covariate-adjusted M-value difference from stable
+  # normal, defined in the legend; R2.7). The authors preferred "effect size" to "ΔM" (2026-10-09).
+  labs(x = "stable_mci effect size", y = "Other groups effect size") +
   guides(color = guide_legend(title = "Stable MCI Group", theme(legend.title.position = "left"))) +
   theme(legend.position = "top")
 

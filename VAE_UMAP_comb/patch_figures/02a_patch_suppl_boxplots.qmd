@@ -128,7 +128,7 @@ fig_vae_boxplot_t7 <- wrap_plots(
   patch_boxplot(vae_boxplot_7[["prev"]], remove_x_title = TRUE),
   patch_boxplot(vae_boxplot_7[["stable_mci"]]),
   ncol = 1
-) + plot_annotation(tag_levels = "a")
+) + plot_annotation(tag_levels = "A")
 
 ggsave(here("VAE_UMAP_comb/patch_figures/output/fig_suppl_vae_boxplot_threshold7.png"),
        fig_vae_boxplot_t7,
@@ -197,7 +197,7 @@ fig_umap_boxplot_t8 <- wrap_plots(
   patch_boxplot(umap_boxplot_8[["prev"]], remove_x_title = TRUE),
   patch_boxplot(umap_boxplot_8[["stable_mci"]]),
   ncol = 1
-) + plot_annotation(tag_levels = "a")
+) + plot_annotation(tag_levels = "A")
 
 ggsave(here("VAE_UMAP_comb/patch_figures/output/fig_suppl_umap_boxplot_threshold8.png"),
        fig_umap_boxplot_t8,
@@ -214,7 +214,7 @@ fig_umap_boxplot_t7 <- wrap_plots(
   patch_boxplot(umap_boxplot_7[["prev"]], remove_x_title = TRUE),
   patch_boxplot(umap_boxplot_7[["stable_mci"]]),
   ncol = 1
-) + plot_annotation(tag_levels = "a")
+) + plot_annotation(tag_levels = "A")
 
 ggsave(here("VAE_UMAP_comb/patch_figures/output/fig_suppl_umap_boxplot_threshold7.png"),
        fig_umap_boxplot_t7,
@@ -269,7 +269,7 @@ ggsave(here("VAE_UMAP_comb/patch_figures/output/fig_suppl_anova_heatmap.png"),
 
 ## VAE methodology (architecture + CV illustration)
 
-Adapted from `VAE_graph/03_patch_vae_figures.qmd`. Combines the VAE architecture schematic (panel a) with the 5-fold CV illustration (panel b).
+Adapted from `VAE_graph/03_patch_vae_figures.qmd`. Combines the VAE architecture schematic (panel A) with the 5-fold CV illustration (panel B).
 
 ```{r}
 #| label: suppl-fig-vae-methodology
@@ -284,7 +284,7 @@ panel_b <- panel_b +
 
 fig_vae_methodology <- wrap_elements(panel_a) / panel_b +
   plot_layout(heights = c(1, 1)) +
-  plot_annotation(tag_levels = "a") &
+  plot_annotation(tag_levels = "A") &
   theme(plot.tag = element_text(face = "bold", size = 10))
 
 ggsave(here("VAE_UMAP_comb/patch_figures/output/fig_suppl_vae_methodology.png"),

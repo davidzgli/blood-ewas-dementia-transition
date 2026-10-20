@@ -11,6 +11,7 @@ Combine selected VAE and UMAP dimensions into single faceted boxplots for both t
 #| echo: false
 
 pacman::p_load(rstatix, colorspace, install = FALSE)
+source(here("custom_func/p_value_label.R"))
 
 conflicted::conflict_prefer_all("dplyr", quiet = TRUE)
 ```
@@ -23,7 +24,7 @@ Load APOE genotype data (shared across both thresholds).
 apoe_geno <-
   haven::read_sas(here("data/private/apoe_genotype.sas7bdat")) |>
   clean_names() |>
-  mutate(genoapoe = factor(genoapoe, levels = c("22", "23", "33", "44", "34", "24")))
+  mutate(genoapoe = factor(genoapoe, levels = c("22", "23", "33", "24", "34", "44")))
 ```
 
 ## Boxplot functions
@@ -170,7 +171,7 @@ kruskal_thr8 <-
   filter(dim_name %in% dims_thr8) |>
   group_by(dim_name) |>
   rstatix::kruskal_test(dim_value ~ apoe_role) |>
-  mutate(label = glue("italic(P) == {round(p, 5)}"))
+  mutate(label = p_value_label(p))
 
 kruskal_thr8
 ```
@@ -245,7 +246,7 @@ kruskal_thr7 <-
   filter(dim_name %in% dims_thr7) |>
   group_by(dim_name) |>
   rstatix::kruskal_test(dim_value ~ apoe_role) |>
-  mutate(label = glue("italic(P) == {round(p, 5)}"))
+  mutate(label = p_value_label(p))
 
 kruskal_thr7
 ```

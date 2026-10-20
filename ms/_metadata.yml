@@ -4,7 +4,32 @@ number-sections: false
 execute:
   echo: false
 
+# Revision markup for a reviewer round. Insertions are wrapped as `[...]{.rev}` (inline)
+# or `::: {.rev}` (block); ms/reference/rev_highlight.lua removes the wrapper and keeps
+# the content (rev-mode clean, the default) or highlights it in docx/typst/html
+# (`quarto render ... -M rev-mode:marked`).
+# - Listed WITHOUT a `quarto` entry, so it runs BEFORE Quarto's crossref and citation
+#   filters and those still see the @RN.. / @fig-x Cites inside the wrapper. Do not put
+#   a `quarto` entry ahead of it.
+# - The default is NOT written here as a `rev-mode:` key. Absent means clean, and the
+#   filter deletes the key once read, because pandoc's docx writer copies unknown keys
+#   into docProps/custom.xml.
+# - The path is relative to THIS file (Quarto rebases it for every document under ms/).
+#   Unlike the typst bibliography paths below, a leading "/" is NOT the project root
+#   here: `/ms/reference/rev_highlight.lua` fails with "cannot open /ms/reference/...".
+filters:
+  - reference/rev_highlight.lua
+
 # Output formats
+#
+# Citation style: Alzheimer's & Dementia. Use american-medical-association.csl (AMA 11th),
+# which is the style the journal names and the one its Wiley-era articles actually print
+# (superscript numbers; "1. Author AB, ... Journal. 2025;21:e14474.").
+# Do NOT swap in the Zotero style called "Alzheimer's & Dementia" -- it is a dependent stub
+# pointing at elsevier-vancouver, frozen in 2018, so it renders the journal's OLD bracketed
+# [1] style, and Typst refuses to load dependent styles at all:
+#   error: failed to load CSL style (expected an independent style but got a dependent style)
+# nature.csl is kept for provenance; it was the style through the Nature Aging / Nat Comms rounds.
 # For docx, the path should be relative to the quarto file
 format:
   html:
@@ -28,35 +53,78 @@ format:
   docx:
     colorlinks: true
     bibliography: ../reference/dementia-EWAS.bib
-    csl: ../reference/nature.csl
+    csl: ../reference/american-medical-association.csl
+    # The DOCX body font lives in this reference doc, NOT in `mainfont:` (pandoc's docx writer
+    # ignores it). Since 2026-10-07 every style names Times New Roman explicitly and the theme
+    # fonts are Times New Roman too; before that the text inherited the Aptos theme font, so the
+    # submitted DOCX was in Aptos although A&D asks for Times or Arial. Tables 1-2 set their
+    # own font in flextable.
     reference-doc: ../reference/custom-reference-doc.docx
   typst:
     columns: 1
     papersize: "us-letter"
+    # A&D asks for double-spaced text in 12-point Times, New Roman or Arial. Set these
+    # through Quarto's own typst options, NOT in include-in-header: the template emits
+    # its own `#set text` after the header, so a font set there is silently ignored and
+    # the render looks unchanged. Liberation Serif is the metric-compatible Times
+    # substitute, and it and Nimbus Roman are the only Times-family faces Typst can see
+    # here -- list them with `quarto typst fonts`, which prints to stderr, not stdout.
+    mainfont: "Liberation Serif"
+    fontsize: 12pt
     bibliography: /ms/reference/dementia-EWAS.bib
-    bibliographystyle: /ms/reference/nature.csl
+    bibliographystyle: /ms/reference/american-medical-association.csl
     include-in-header:
       - text: |
           #set par.line(numbering: "1", numbering-scope: "page")
 
+          // Double spacing. `linestretch: 2` is a LaTeX/HTML option that Quarto's typst
+          // article template does not accept -- it is dropped without warning, and the
+          // render simply stays single-spaced. Leading set here DOES survive the template.
+          // 1.2em puts the baselines ~24pt apart, i.e. 2x the 12pt body. Verify by counting
+          // numbered lines per page: double spacing gives ~27, single gives ~37.
+          #set par(leading: 1.2em, spacing: 1.2em)
+
+          // A&D writes "Figure S1", not "Figure S 1". Typst always joins a float's
+          // supplement to its number with a space, and Quarto's
+          // `space-before-numbering: false` (which the docx/html paths do honour) is a
+          // LaTeX/HTML option it does not translate to Typst. These two rules close the
+          // gap for the three supplementary kinds only, keyed on the float kind so main
+          // figures and tables keep their normal "Figure 1" / "Table 1" spacing.
+          // Do NOT try to fix this with a typst-specific `crossref.custom:` block instead:
+          // a format-level crossref override silently breaks Quarto's float-kind
+          // assignment and swallows the main table into the supplementary counter.
+          #show figure.caption: it => {
+            if repr(it.counter).contains("quarto-float-supp") {
+              [#it.supplement#context it.counter.display(it.numbering)#it.separator#it.body]
+            } else { it }
+          }
+          #show ref: it => {
+            let el = it.element
+            if el != none and el.func() == figure and type(el.kind) == str and el.kind.starts-with("quarto-float-supp") {
+              let sup = if it.supplement == auto { el.supplement } else { it.supplement }
+              link(el.location(),
+                [#sup#numbering(el.numbering, ..counter(figure.where(kind: el.kind)).at(el.location()))])
+            } else { it }
+          }
+
 crossref:
-  fig-prefix: "Fig. " 
+  fig-prefix: "Figure "
   custom:
     - kind: float
       key: suppfig
       latex-env: suppfig
-      reference-prefix: "Supplementary Fig. "
-      space-before-numbering: true
+      reference-prefix: "Figure S"
+      space-before-numbering: false
       latex-list-of-description: Supplementary Figure
     - kind: float
       key: supptbl
       latex-env: supptbl
-      reference-prefix: "Supplementary Table"
-      space-before-numbering: true
+      reference-prefix: "Table S"
+      space-before-numbering: false
       latex-list-of-description: Supplementary Table
     - kind: float
       key: suppdata
       latex-env: suppdata
-      reference-prefix: "Supplementary Data"
-      space-before-numbering: true
+      reference-prefix: "Data S"
+      space-before-numbering: false
       latex-list-of-description: Supplementary Data

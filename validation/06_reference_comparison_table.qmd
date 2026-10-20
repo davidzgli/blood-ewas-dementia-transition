@@ -57,14 +57,14 @@ comparison_data <- tibble::tribble(
   "Logistic regression\n(mixed-effects for ADNI)",
   "AD vs CN",
   "797 unique\n(227 AD, 570 CN)",
-  "prevalent dementia (AD)\nvs stable_normal (CN)",
+  "normal2incid, mci2incid and prevalent dementia, each vs stable normal",
 
   "AddNeuroMed Study\n(Roubroeks et al., 2020)",
   "Illumina 450K",
   "ANOVA on residuals",
   "AD vs CN, \n MCI vs CN",
   "284\n(89 CN, 109 MCI, 86 AD)",
-  "AD vs CN ~ prevalent, \nMCI vs CN ~ mci2incid/\nstable_mci"
+  "normal2incid, mci2incid and prevalent dementia, each vs stable normal"
 )
 
 # Create gt table
@@ -79,7 +79,7 @@ comparison_table <- comparison_data |>
     statistical_method = "Statistical\nMethod",
     comparison_groups = "Comparison\nGroups",
     sample_size = "Sample\nSize",
-    ages_equivalent = "AGES Equivalent\nComparison"
+    ages_equivalent = "AGES groups compared"
   ) |>
   tab_header(
     title = md("**Comparison of AGES Cohort with Published Dementia EWAS Studies**"),

@@ -207,6 +207,10 @@ Dimension pairs (rows) x method-threshold combinations (columns), with red fill 
 #| fig-width: 10
 #| fig-height: 8
 
+# A P-value of 0 means none of the 1,000 permutations reached the observed DPS,
+# so the cell prints the bound "< 0.001" rather than "0.000" (R1.5)
+stopifnot(all(pvalues_all$n_permutations == 1000))
+
 plot_pvalue_heatmap <- ggplot(
   pvalues_all,
   aes(x = method_threshold, y = dim_pair_label, fill = p_value)
@@ -214,7 +218,7 @@ plot_pvalue_heatmap <- ggplot(
   geom_tile(color = "white", linewidth = 0.5) +
   geom_text(
     aes(
-      label = sprintf("%.3f", p_value),
+      label = if_else(n_perm_gte == 0, "< 0.001", sprintf("%.3f", p_value)),
       color = p_value < 0.05
     ),
     size = 3.5, fontface = "bold", show.legend = FALSE
@@ -223,11 +227,13 @@ plot_pvalue_heatmap <- ggplot(
   scale_fill_gradient2(
     low = "#b2182b", mid = "#fddbc7", high = "white",
     midpoint = 0.05, limits = c(0, 1),
-    name = "p-value"
+    # Markdown, not a plotmath expression: theme_main_fig() draws legend titles with ggtext,
+    # which drops an expression
+    name = "*P* value"
   ) +
   labs(
-    title = "Empirical P-values: Observed vs Permuted Path2D DPS",
-    subtitle = "Red = significant (p < 0.05); white = non-significant",
+    title = "Empirical P values: Observed vs Permuted Path2D DPS",
+    subtitle = "Red = significant (P < 0.05); white = non-significant",
     x = "Method / Threshold",
     y = "Dimension Pair"
   ) +

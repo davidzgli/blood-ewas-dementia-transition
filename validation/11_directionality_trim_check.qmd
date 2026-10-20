@@ -1,0 +1,498 @@
+---
+title: "Directionality trim check"
+subtitle: "Single- versus double-trimmed AddNeuroMed sign tests, and the overlap of the 403 DMPs with the comparators (reviewer R2.8)"
+params:
+  quartile_cutoff: 0.95
+---
+
+## Overview
+
+Reviewer R2.8 asked how the comparisons with ADNI/AIBL and AddNeuroMed were done and where the directionality tests are shown. Checking the numbers behind Figure 5C–D showed that the AddNeuroMed sign tests (Figure 5D) were run on data trimmed twice: `05_AddNeuroMed_comparison.qmd` removes the outer 2.5% of each axis and saves `es_long_filtered_AddNeuroMed.rds`, and `10d_directionality_AddNeuroMed.qmd` reads that file and trims it again. The META sign tests (Figure 5C, `10a_directionality_ADNI_AIBL.qmd`) trim once.
+
+This notebook recomputes the sign tests from the saved validation outputs with the producers' own trimming and test code, sets the single- and double-trimmed AddNeuroMed results side by side, reproduces the META sign tests, and counts how many of the 403 AGES DMPs are present in each comparator and how strongly they are associated there. It changes no producer and overwrites no existing output; it writes two new files:
+
+- `validation/output/directionality_results_AddNeuroMed_single_trim.rds`, the corrected (once-trimmed) AddNeuroMed sign tests;
+- `validation/output/dmp_overlap_ADNI_AIBL_AddNeuroMed.rds`, the 403 DMPs with their META and AddNeuroMed membership.
+
+No manuscript float reads either file; the numbers are quoted in the response letter.
+
+```{r}
+#| label: load-packages
+#| echo: false
+
+# tidyverse, here, janitor and glue are pre-loaded by .Rprofile
+pacman::p_load(readxl, install = FALSE)
+
+conflicted::conflict_prefer_all("dplyr", quiet = TRUE)
+```
+
+## Helpers
+
+The trimming and sign-test helpers copy the code of `05_AddNeuroMed_comparison.qmd` (trim), `10a_directionality_ADNI_AIBL.qmd` and `10d_directionality_AddNeuroMed.qmd` (trim and test), with the column names passed as arguments. `format_p()` prints *P* values the way the response letter does: two significant figures, in scientific notation below 0.001.
+
+```{r}
+#| label: helpers
+
+# Central-quantile trim, per group, on both axes (the producers' apply-quartile-filter chunk)
+trim_central <- function(dat, x, y, by, cutoff = params$quartile_cutoff) {
+  lower_q <- (1 - cutoff) / 2
+  upper_q <- 1 - lower_q
+
+  dat |>
+    mutate(
+      x_lower = quantile({{ x }}, lower_q, na.rm = TRUE),
+      x_upper = quantile({{ x }}, upper_q, na.rm = TRUE),
+      y_lower = quantile({{ y }}, lower_q, na.rm = TRUE),
+      y_upper = quantile({{ y }}, upper_q, na.rm = TRUE),
+      .by = all_of(by)
+    ) |>
+    filter(
+      {{ x }} >= x_lower & {{ x }} <= x_upper,
+      {{ y }} >= y_lower & {{ y }} <= y_upper
+    ) |>
+    select(-x_lower, -x_upper, -y_lower, -y_upper)
+}
+
+# Sign concordance and one-sided exact binomial test (the producers' directionality chunks)
+sign_test <- function(dat, x, y, by) {
+  dat |>
+    mutate(
+      x_direction = sign({{ x }}),
+      y_direction = sign({{ y }}),
+      concordant = x_direction == y_direction & x_direction != 0 & y_direction != 0
+    ) |>
+    summarise(
+      n_total = n(),
+      n_concordant = sum(concordant, na.rm = TRUE),
+      n_discordant = n_total - n_concordant,
+      prop_concordant = n_concordant / n_total,
+      .by = all_of(by)
+    ) |>
+    rowwise() |>
+    mutate(
+      binom_test = list(binom.test(n_concordant, n_total, p = 0.5, alternative = "greater")),
+      ci_lower = binom_test$conf.int[1],
+      ci_upper = binom_test$conf.int[2],
+      binom_pval = binom_test$p.value
+    ) |>
+    ungroup() |>
+    select(-binom_test) |>
+    mutate(
+      significance = case_when(
+        binom_pval < 0.001 ~ "***",
+        binom_pval < 0.01 ~ "**",
+        binom_pval < 0.05 ~ "*",
+        TRUE ~ ""
+      )
+    )
+}
+
+# P value as printed in the response letter
+format_p <- function(p) {
+  map_chr(p, \(x) {
+    if (x >= 0.001) {
+      return(formatC(signif(x, 2), format = "fg", digits = 2))
+    }
+    exponent <- floor(log10(x))
+    mantissa <- round(x / 10^exponent, 1)
+    if (mantissa >= 10) {
+      mantissa <- mantissa / 10
+      exponent <- exponent + 1
+    }
+    sprintf("%.1f × 10^−%d^", mantissa, -exponent)
+  })
+}
+
+# One letter-style cell: CpG count / % concordant / P
+format_cell <- function(n_total, prop_concordant, binom_pval) {
+  glue("{format(n_total, big.mark = ',')} / {sprintf('%.1f', 100 * prop_concordant)}% / {format_p(binom_pval)}")
+}
+
+trajectory_order <- c("normal2incid", "mci2incid", "prev")
+```
+
+## Load data
+
+The AddNeuroMed and META comparison outputs saved by the validation producers, plus the AGES association results that define the 403 DMPs and the two published files, read only to count their CpG sites.
+
+```{r}
+#| label: load-data
+
+# AddNeuroMed (05_AddNeuroMed_comparison.qmd)
+merged_addneuromed <- read_rds(here("validation/output/merged_data_AddNeuroMed.rds"))
+es_long_filtered <- read_rds(here("validation/output/es_long_filtered_AddNeuroMed.rds"))
+
+# Submitted Figure 5D. Since the Gate B fix (2026-10-07) 10d_directionality_AddNeuroMed.qmd trims
+# once and overwrites fig_directionality_barplot_AddNeuroMed.rds, so the submitted (twice-trimmed)
+# bars are recorded here as printed in the response letter's Appendix G: CpG count after trimming
+# and the one-sided binomial P to two significant figures.
+submitted_figure_5d <- tribble(
+  ~addneuromed_comparison, ~ages_trajectory, ~n_total, ~binom_pval_2sf,
+  "AD vs CN",  "normal2incid", 754L, 0.016,
+  "AD vs CN",  "mci2incid",    754L, 4.7e-11,
+  "AD vs CN",  "prev",         755L, 4.1e-10,
+  "MCI vs CN", "normal2incid", 757L, 2.5e-11,
+  "MCI vs CN", "mci2incid",    754L, 5.1e-14,
+  "MCI vs CN", "prev",         755L, 4.2e-20
+)
+
+# Corrected Figure 5D (10d after the fix: the once-trimmed sign tests)
+corrected_10d <- read_rds(here("validation/output/directionality_results_AddNeuroMed.rds"))
+
+# META (01_ADNI_AIBL_comparison.qmd, 10a_directionality_ADNI_AIBL.qmd)
+merged_meta <- read_rds(here("validation/output/merged_data_ADNI_AIBL.rds"))
+facet_meta <- read_rds(here("validation/output/facet_data_pre_filter_ADNI_AIBL.rds"))
+saved_meta_results <- read_rds(here("validation/output/directionality_results_ADNI_AIBL.rds"))
+
+# AGES association results (the DMP definition)
+asso <- read_rds(here("data/upon_request/whole_genome_wide.rds"))
+
+# Published comparator files, read with the producers' own arguments
+addneuromed_published <- read_excel(
+  here("data/published_data/AD_EWAS_HOBX6_NeurologyofAging2020/AppendixA_AddNeuroMed_CTL_MCI_AD.xlsx"),
+  sheet = "Supp Table 1 analysis",
+  skip = 3
+) |>
+  clean_names()
+
+meta_published <- read_excel(
+  here("data/published_data/MIAMI_AD_database/blood_AD_ADNI_AIBL.xlsx"),
+  skip = 3
+) |>
+  clean_names()
+```
+
+The published AddNeuroMed list has `r format(nrow(addneuromed_published), big.mark = ",")` CpG sites, of which `r format(nrow(merged_addneuromed), big.mark = ",")` are among the AGES CpG sites; the META summary statistics have `r format(nrow(meta_published), big.mark = ",")` CpG sites, of which `r format(nrow(merged_meta), big.mark = ",")` are among the `r format(nrow(asso), big.mark = ",")` AGES CpG sites.
+
+## AddNeuroMed: single versus double trimming
+
+The untrimmed comparison table is rebuilt from `merged_data_AddNeuroMed.rds` with the pivots of `05_AddNeuroMed_comparison.qmd`, trimmed once, and checked against the saved `es_long_filtered_AddNeuroMed.rds`. Trimming that saved file a second time, as `10d` does, must then reproduce the submitted Figure 5D.
+
+### Rebuild the trims
+
+The once-trimmed table should equal the saved file row for row, and the twice-trimmed sign tests should equal the data behind the submitted Figure 5D bar plot.
+
+```{r}
+#| label: rebuild-trims
+
+es_long_untrimmed <- merged_addneuromed |>
+  pivot_longer(
+    cols = c(normal2mci_es, stable_mci_es, normal2incid_es, mci2incid_es, prev_es),
+    names_to = "ages_trajectory",
+    values_to = "ages_effect_size"
+  ) |>
+  mutate(
+    ages_trajectory = str_replace(ages_trajectory, "_es", ""),
+    ages_trajectory = factor(
+      ages_trajectory,
+      levels = c("normal2mci", "stable_mci", "normal2incid", "mci2incid", "prev")
+    )
+  ) |>
+  pivot_longer(
+    cols = c(difference_ctl_vs_mci, difference_ctl_vs_ad, difference_mci_vs_ad),
+    names_to = "addneuromed_comparison",
+    values_to = "addneuromed_effect_size"
+  ) |>
+  mutate(
+    addneuromed_comparison = case_when(
+      addneuromed_comparison == "difference_ctl_vs_mci" ~ "MCI vs CN",
+      addneuromed_comparison == "difference_ctl_vs_ad" ~ "AD vs CN",
+      addneuromed_comparison == "difference_mci_vs_ad" ~ "MCI vs AD",
+      TRUE ~ addneuromed_comparison
+    ),
+    addneuromed_comparison = factor(
+      addneuromed_comparison,
+      levels = c("MCI vs CN", "AD vs CN", "MCI vs AD")
+    )
+  )
+
+addneuromed_groups <- c("addneuromed_comparison", "ages_trajectory")
+
+es_single_trim <- es_long_untrimmed |>
+  trim_central(ages_effect_size, addneuromed_effect_size, addneuromed_groups)
+
+es_double_trim <- es_long_filtered |>
+  trim_central(ages_effect_size, addneuromed_effect_size, addneuromed_groups)
+
+# The saved file is the single trim
+stopifnot(isTRUE(all.equal(es_single_trim, es_long_filtered)))
+
+results_untrimmed <- sign_test(es_long_untrimmed, ages_effect_size, addneuromed_effect_size, addneuromed_groups)
+results_single <- sign_test(es_long_filtered, ages_effect_size, addneuromed_effect_size, addneuromed_groups)
+results_double <- sign_test(es_double_trim, ages_effect_size, addneuromed_effect_size, addneuromed_groups)
+
+# The double trim reproduces the submitted Figure 5D
+submitted_check <- submitted_figure_5d |>
+  left_join(
+    results_double |>
+      mutate(across(all_of(addneuromed_groups), as.character)) |>
+      select(addneuromed_comparison, ages_trajectory, n_total_re = n_total, binom_pval_re = binom_pval),
+    by = addneuromed_groups
+  )
+
+stopifnot(
+  nrow(submitted_check) == 6,
+  all(submitted_check$n_total == submitted_check$n_total_re),
+  all(signif(submitted_check$binom_pval_re, 2) == submitted_check$binom_pval_2sf)
+)
+
+# The single trim reproduces the corrected 10d output, all 15 comparisons
+corrected_check <- results_single |>
+  select(all_of(addneuromed_groups), n_total, n_concordant, binom_pval) |>
+  inner_join(
+    corrected_10d |> select(all_of(addneuromed_groups), n_total_10d = n_total, n_concordant_10d = n_concordant, binom_pval_10d = binom_pval),
+    by = addneuromed_groups
+  )
+
+stopifnot(
+  nrow(corrected_check) == nrow(corrected_10d),
+  all(corrected_check$n_total == corrected_check$n_total_10d),
+  all(corrected_check$n_concordant == corrected_check$n_concordant_10d),
+  isTRUE(all.equal(corrected_check$binom_pval, corrected_check$binom_pval_10d))
+)
+```
+
+The rebuilt single trim keeps `r format(nrow(es_single_trim), big.mark = ",")` comparison rows, identical to the saved file, and the second trim leaves `r format(nrow(es_double_trim), big.mark = ",")`. The second trim reproduces the six submitted Figure 5D bars (counts exactly, *P* values to the two significant figures recorded in the response letter), and the single trim reproduces every comparison in the corrected 10d output (`directionality_results_AddNeuroMed.rds`).
+
+### Figure 5D comparisons
+
+The six comparisons drawn in Figure 5D, in the layout of the response letter's Appendix G: CpG count after trimming / % concordant / one-sided binomial *P*. The untrimmed column is shown for reference only.
+
+```{r}
+#| label: tbl-figure-5d
+
+figure_5d <- list(untrimmed = results_untrimmed, single = results_single, double = results_double) |>
+  bind_rows(.id = "trim") |>
+  filter(
+    addneuromed_comparison %in% c("AD vs CN", "MCI vs CN"),
+    ages_trajectory %in% trajectory_order
+  ) |>
+  mutate(cell = format_cell(n_total, prop_concordant, binom_pval)) |>
+  select(trim, addneuromed_comparison, ages_trajectory, cell) |>
+  pivot_wider(names_from = trim, values_from = cell) |>
+  arrange(
+    fct_relevel(addneuromed_comparison, "AD vs CN", "MCI vs CN"),
+    fct_relevel(ages_trajectory, trajectory_order)
+  )
+
+figure_5d |>
+  select(addneuromed_comparison, ages_trajectory, single, double, untrimmed) |>
+  knitr::kable(
+    col.names = c(
+      "AddNeuroMed contrast", "AGES group", "Corrected (trimmed once)",
+      "Submitted Figure 5D (trimmed twice)", "Untrimmed"
+    )
+  )
+```
+
+```{r}
+#| label: figure-5d-ranges
+
+summarise_range <- function(results) {
+  results |>
+    filter(
+      addneuromed_comparison %in% c("AD vs CN", "MCI vs CN"),
+      ages_trajectory %in% trajectory_order
+    ) |>
+    summarise(
+      n_min = min(n_total, na.rm = TRUE),
+      n_max = max(n_total, na.rm = TRUE),
+      pct_min = 100 * min(prop_concordant, na.rm = TRUE),
+      pct_max = 100 * max(prop_concordant, na.rm = TRUE),
+      p_max = max(binom_pval, na.rm = TRUE),
+      .by = addneuromed_comparison
+    )
+}
+
+range_single <- summarise_range(results_single)
+range_double <- summarise_range(results_double)
+
+pct_range <- function(ranges, contrast) {
+  row <- filter(ranges, addneuromed_comparison == contrast)
+  glue("{sprintf('%.1f', row$pct_min)}–{sprintf('%.1f', row$pct_max)}%")
+}
+```
+
+Trimmed once, the six comparisons use `r min(range_single$n_min)`–`r max(range_single$n_max)` CpG sites; trimmed twice, `r min(range_double$n_min)`–`r max(range_double$n_max)`. Once-trimmed concordance is `r pct_range(range_single, "MCI vs CN")` for MCI vs CN and `r pct_range(range_single, "AD vs CN")` for AD vs CN, with the largest *P* = `r format_p(max(range_single$p_max))` (submitted: `r format_p(max(range_double$p_max))`).
+
+### All AddNeuroMed comparisons
+
+All fifteen comparator-by-group combinations, including the MCI vs AD contrast and the stable_mci and normal2mci groups that Figure 5D does not show.
+
+```{r}
+#| label: tbl-all-addneuromed
+
+list(single = results_single, double = results_double) |>
+  bind_rows(.id = "trim") |>
+  mutate(cell = format_cell(n_total, prop_concordant, binom_pval)) |>
+  select(trim, addneuromed_comparison, ages_trajectory, cell) |>
+  pivot_wider(names_from = trim, values_from = cell) |>
+  arrange(addneuromed_comparison, ages_trajectory) |>
+  knitr::kable(col.names = c("AddNeuroMed contrast", "AGES group", "Trimmed once", "Trimmed twice"))
+```
+
+## META: sign tests trimmed once
+
+`10a_directionality_ADNI_AIBL.qmd` trims the pre-trim threshold table once; the recomputation must match its saved `directionality_results_ADNI_AIBL.rds`.
+
+```{r}
+#| label: meta-sign-tests
+
+meta_groups <- c("cutoff_value", "demcat")
+
+results_meta <- facet_meta |>
+  trim_central(ages_effect_size, log2_or, meta_groups) |>
+  sign_test(ages_effect_size, log2_or, meta_groups)
+
+meta_check <- saved_meta_results |>
+  select(cutoff_value, demcat, n_total, n_concordant, binom_pval) |>
+  mutate(demcat = as.character(demcat)) |>
+  left_join(
+    results_meta |>
+      mutate(demcat = as.character(demcat)) |>
+      select(cutoff_value, demcat, n_total_re = n_total, n_concordant_re = n_concordant, binom_pval_re = binom_pval),
+    by = meta_groups
+  )
+
+stopifnot(
+  nrow(meta_check) == 30,
+  all(meta_check$n_total == meta_check$n_total_re),
+  all(meta_check$n_concordant == meta_check$n_concordant_re),
+  isTRUE(all.equal(meta_check$binom_pval, meta_check$binom_pval_re))
+)
+
+meta_pre_trim <- facet_meta |>
+  distinct(cutoff_value, n_cpgs) |>
+  arrange(desc(cutoff_value))
+```
+
+The recomputed META sign tests match all 30 saved results. Before trimming there were `r meta_pre_trim |> filter(cutoff_value == 4.5) |> pull(n_cpgs)` CpG sites at *P* < 1.0 × 10^−4.5^ and `r meta_pre_trim |> filter(cutoff_value == 4) |> pull(n_cpgs)` at *P* < 1.0 × 10^−4^, the counts printed in Figure 5A.
+
+### Figure 5C comparisons
+
+The three AGES groups drawn in Figure 5C at the six META thresholds: CpG count after trimming / % concordant / one-sided binomial *P*.
+
+```{r}
+#| label: tbl-figure-5c
+
+results_meta |>
+  filter(demcat %in% trajectory_order) |>
+  mutate(
+    cell = format_cell(n_total, prop_concordant, binom_pval),
+    demcat = fct_relevel(as.character(demcat), trajectory_order),
+    threshold = glue("*P* < 1.0 × 10^−{cutoff_value}^")
+  ) |>
+  arrange(desc(cutoff_value), demcat) |>
+  select(cutoff_value, threshold, demcat, cell) |>
+  pivot_wider(names_from = demcat, values_from = cell) |>
+  select(-cutoff_value) |>
+  knitr::kable(col.names = c("META threshold", "normal2incid", "mci2incid", "prevalent dementia"))
+```
+
+```{r}
+#| label: figure-5c-ranges
+
+range_meta <- results_meta |>
+  filter(demcat %in% trajectory_order) |>
+  summarise(
+    pct_min = 100 * min(prop_concordant, na.rm = TRUE),
+    pct_max = 100 * max(prop_concordant, na.rm = TRUE),
+    p_max = max(binom_pval, na.rm = TRUE),
+    .by = demcat
+  )
+
+meta_text <- function(group) {
+  row <- filter(range_meta, demcat == group)
+  glue("{sprintf('%.1f', row$pct_min)}–{sprintf('%.1f', row$pct_max)}% (largest *P* = {format_p(row$p_max)})")
+}
+
+prev_p_below_top <- results_meta |>
+  filter(demcat == "prev", cutoff_value < 4.5) |>
+  summarise(p_max = max(binom_pval, na.rm = TRUE)) |>
+  pull(p_max)
+```
+
+Across the six thresholds, concordance is `r meta_text("normal2incid")` for normal2incid, `r meta_text("mci2incid")` for mci2incid and `r meta_text("prev")` for prevalent dementia; for prevalent dementia, the largest *P* below the most stringent threshold is `r format_p(prev_p_below_top)`.
+
+## The 403 DMPs in the comparators
+
+The 403 DMPs are the CpG sites with −log~10~ *P* ≥ 8 in any of the five AGES contrasts (the rule of `dmp/01_Manhattan_plot.qmd`). Each is looked up in the merged META and AddNeuroMed tables.
+
+```{r}
+#| label: dmp-overlap
+
+p_columns <- str_subset(names(asso), "nlog10_p_value")
+
+dmp_long <- asso |>
+  select(cg, all_of(p_columns)) |>
+  pivot_longer(-cg, names_to = "contrast", values_to = "nlog10_p_value", names_prefix = "nlog10_p_value_") |>
+  filter(nlog10_p_value >= 8) |>
+  summarise(dmp_contrasts = str_flatten(contrast, collapse = ", "), .by = cg)
+
+dmp_overlap <- asso |>
+  select(cg, normal2incid_es = estimate_normal2incid, mci2incid_es = estimate_mci2incid, prev_es = estimate_prev) |>
+  inner_join(dmp_long, by = "cg") |>
+  left_join(
+    merged_meta |> select(cg, adni_aibl_log2_or = log2_or, adni_aibl_pvalue = pvalue),
+    by = "cg"
+  ) |>
+  mutate(
+    in_adni_aibl = !is.na(adni_aibl_pvalue),
+    in_addneuromed = cg %in% merged_addneuromed$cg,
+    sign_matches_prev = sign(adni_aibl_log2_or) == sign(prev_es)
+  ) |>
+  relocate(cg, dmp_contrasts, in_adni_aibl, adni_aibl_pvalue, adni_aibl_log2_or, in_addneuromed)
+
+stopifnot(nrow(dmp_overlap) == 403)
+
+overlap_summary <- dmp_overlap |>
+  summarise(
+    n_dmp = n(),
+    n_in_adni_aibl = sum(in_adni_aibl, na.rm = TRUE),
+    n_p_1e4 = sum(adni_aibl_pvalue < 1e-4, na.rm = TRUE),
+    n_p_1e3 = sum(adni_aibl_pvalue < 1e-3, na.rm = TRUE),
+    n_p_005 = sum(adni_aibl_pvalue < 0.05, na.rm = TRUE),
+    n_in_addneuromed = sum(in_addneuromed, na.rm = TRUE)
+  )
+
+top_dmp <- dmp_overlap |>
+  filter(in_adni_aibl) |>
+  slice_min(adni_aibl_pvalue, n = 1)
+```
+
+Of the `r overlap_summary$n_dmp` DMPs, `r overlap_summary$n_in_adni_aibl` are in the META summary statistics. Of those, `r overlap_summary$n_p_1e4` has META *P* < 1.0 × 10^−4^ and `r overlap_summary$n_p_1e3` has *P* < 1.0 × 10^−3^ (`r top_dmp$cg`, *P* = `r format_p(top_dmp$adni_aibl_pvalue)`, `r if (isTRUE(top_dmp$sign_matches_prev)) "same" else "opposite"` sign as prevalent dementia in AGES); `r overlap_summary$n_p_005` reach *P* < 0.05, against `r sprintf("%.1f", 0.05 * overlap_summary$n_in_adni_aibl)` expected by chance. `r overlap_summary$n_in_addneuromed` DMP (`r str_flatten(dmp_overlap$cg[dmp_overlap$in_addneuromed], ", ")`) is among the `r format(nrow(merged_addneuromed), big.mark = ",")` matched AddNeuroMed sites.
+
+```{r}
+#| label: tbl-dmp-top-meta
+
+dmp_overlap |>
+  filter(in_adni_aibl) |>
+  slice_min(adni_aibl_pvalue, n = 5) |>
+  mutate(adni_aibl_pvalue = format_p(adni_aibl_pvalue)) |>
+  select(cg, dmp_contrasts, adni_aibl_pvalue, adni_aibl_log2_or, prev_es, mci2incid_es, normal2incid_es) |>
+  knitr::kable(
+    digits = 4,
+    col.names = c("CpG", "AGES DMP contrasts", "META *P*", "META log~2~ OR", "prev ES", "mci2incid ES", "normal2incid ES"),
+    caption = "The five DMPs with the smallest META P values"
+  )
+```
+
+## Save outputs
+
+The once-trimmed AddNeuroMed sign tests (all fifteen combinations, with the columns of `10d`'s `binomial_results`) and the 403-DMP overlap table.
+
+```{r}
+#| label: save-outputs
+
+write_rds(
+  results_single |>
+    mutate(ages_trajectory = fct_relevel(ages_trajectory, "prev", "mci2incid", "normal2incid", "stable_mci", "normal2mci")) |>
+    arrange(addneuromed_comparison, ages_trajectory),
+  here("validation/output/directionality_results_AddNeuroMed_single_trim.rds")
+)
+
+write_rds(
+  dmp_overlap,
+  here("validation/output/dmp_overlap_ADNI_AIBL_AddNeuroMed.rds")
+)
+```

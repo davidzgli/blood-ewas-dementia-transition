@@ -1,4 +1,4 @@
-# Blood DNA methylation traces a continuous epigenetic trajectory across stages of dementia progression
+# Blood DNA methylation traces an epigenetic trajectory across stages of dementia
 
 Analysis code and manuscript sources for an epigenome-wide association study (EWAS) of blood
 DNA methylation and dementia progression in the AGES–Reykjavik cohort (n = 2,491, up to 13.4
@@ -109,8 +109,8 @@ versions the published fit used.
 
 | File | Gates |
 |---|---|
-| `whole_genome_wide.rds` | `validation/01,02,03,05` (all external validation) |
-| `annotated_asso_wide.rds` | `normal2mci_focused/01`, `stable_mci_focused/01`, `extended_data/01,02`, `pathway_analysis/01_genes/01,02` |
+| `whole_genome_wide.rds` | `validation/01,02,03,05` (all external validation); `dmp/04,05` |
+| `annotated_asso_wide.rds` | `normal2mci_focused/01,05`, `stable_mci_focused/01`, `extended_data/01,02`, `pathway_analysis/01_genes/01,02` |
 | `background_great_genes.rds` | `pathway_analysis/02_gene_ontology/02` (GO background) |
 | `manhattan_plot_data.rds` | `dmp/01` (Manhattan plot) |
 | `dementia_relevance_for_top_genes.rds` | `normal2mci_focused/04` |
@@ -120,15 +120,18 @@ versions the published fit used.
 | File | Gates |
 |---|---|
 | `adjusted_meth/adjusted_methylation_scaled_nlog10p_gte_{7,8}.rds` | **all of Pipeline B** — VAE, UMAP, `VAE_UMAP_comb`, `APOE` |
-| `covariates_and_meth_DMP_on_chr21.rds` | `demographics/01,02,03` |
-| `blood_cell_composition.csv` | `demographics/02` |
+| `adjusted_meth_whole_genome.h5` | `dmp/04,05` |
+| `covariates_and_meth_DMP_on_chr21.rds` | `demographics/01,02,03,04`; `dmp/04,05` |
+| `covariate_dementia_cat.rds` | `demographics/04`; `dmp/05` |
+| `rai_a1a2cogstat2016_jan2017_reva.sas7bdat` | `demographics/04`; `dmp/05` |
+| `blood_cell_composition.csv` | `demographics/02`; `dmp/04,05` |
 
 ### `data/private/` — most restricted
 
 | File | Gates |
 |---|---|
 | `apoe_genotype.sas7bdat` | `APOE/01,06`; `demographics/03` |
-| `ages1_derived_variables_nov2021.sas7bdat` | `demographics/03` |
+| `ages1_derived_variables_nov2021.sas7bdat` | `demographics/03`; `demographics/05`; `dmp/04` |
 | `gene_dmp_dementia_relevance.rds` | `dmp/01` |
 
 ### `data/published_data/` — third-party; download it yourself
@@ -237,10 +240,11 @@ An honest accounting, from a clean clone with no additional data:
 | Pipeline | Runs? | Missing |
 |---|---|---|
 | A — demographics | no | `collaborator_only`, `private` |
-| A — dmp | no | `private`, `upon_request` |
+| A — dmp | no | `collaborator_only`, `private`, `upon_request` |
 | A — validation | no | `upon_request`, `published_data` |
 | A — normal2mci `02`, `03` | **yes** | — uses shipped data |
 | A — normal2mci `01`; stable_mci `01` | no | `upon_request` |
+| A — normal2mci `05` | no | `upon_request`, plus the output of `validation/` (`published_data`), Pipeline B (`collaborator_only`, `private`, TensorFlow) and Pipeline C |
 | A — stable_mci `02` | **yes** | — uses shipped data |
 | B — UMAP, VAE, comb, APOE | no | `collaborator_only` (+ `private`), + TensorFlow |
 | C — pathway, extended data | no | `upon_request` |

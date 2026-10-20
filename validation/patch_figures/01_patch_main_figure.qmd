@@ -159,7 +159,7 @@ modify_strip_labels <- function(plot) {
   plot
 }
 
-# Panels a and b span the full text width, so their annotations can carry a larger
+# Panels A and b span the full text width, so their annotations can carry a larger
 # boost than the half-width panels of the previous six-panel layout.
 scatter_boost <- 1.7
 
@@ -169,10 +169,12 @@ fig_a <- fig_adni_aibl_scatter |>
   adjust_pval_annotation_y(new_y = 0.82) |>
   modify_strip_labels()
 
+# Axis titles name each study's own effect measure (reviewer R2.7) and give the
+# number of participants as "n" (R1.7)
 fig_a <- fig_a +
   labs(
-    x = "Effect size of AGES cohort <br> <span style='font-size:5pt'>(N<sub>Subjects</sub> = 2,491)</span>",
-    y = "Effect size of ADNI/AIBL Meta <br> <span style='font-size:5pt'>(N<sub>Subjects</sub> = 797)</span>"
+    x = "AGES effect size <br> <span style='font-size:5pt'>(n = 2,491)</span>",
+    y = "ADNI/AIBL log<sub>2</sub> OR per 0.01 beta <br> <span style='font-size:5pt'>(n = 797)</span>"
   ) +
   theme_main_fig(base_size = base_size) +
   theme(
@@ -196,8 +198,8 @@ fig_b <- fig_addneuromed_scatter |>
 
 fig_b <- fig_b +
   labs(
-    x = "Effect size of AGES cohort <br> <span style='font-size:5pt'>(N<sub>Subjects</sub> = 2,491)</span>",
-    y = "Effect size of AddNeuroMed study <br> <span style='font-size:5pt'>(N<sub>Subjects</sub> = 284)</span>"
+    x = "AGES effect size <br> <span style='font-size:5pt'>(n = 2,491)</span>",
+    y = "AddNeuroMed difference in adjusted beta <br> <span style='font-size:5pt'>(n = 284)</span>"
   ) +
   theme_main_fig(base_size = base_size) +
   theme(
@@ -220,8 +222,12 @@ fig_c <- fig_directionality_adni_aibl |>
   modify_strip_labels()
 
 fig_c <- fig_c +
+  # P in the house style (custom_func/p_value_label.R): -log10 P with an italic P. The space
+  # after the subscript is a four-per-em space (U+2005): ggtext drops an ordinary or a non-breaking
+  # space there
   labs(
-    x = "-log10(Asso *P*-value) Threshold",
+    x = "−log<sub>10</sub>\u2005*P* threshold (meta-analysis)",
+    y = "−log<sub>10</sub>\u2005*P* (binomial test)",
     color = "AGES"
   ) +
   theme_main_fig(base_size = base_size) +
@@ -243,7 +249,7 @@ fig_c <- rescale_layer_params(fig_c, size_scale = 0.5, linewidth_scale = 0.5)
 
 # Row 3 right (d): AddNeuroMed sign concordance barplot (keep legend inside plot)
 fig_d <- fig_addneuromed_bar +
-  labs(x = "AGES cohort") +
+  labs(x = "AGES cohort", y = "−log<sub>10</sub>\u2005*P* (binomial test)") +
   theme_main_fig(base_size = base_size) +
   theme(
     plot.title = element_blank(),
@@ -263,7 +269,7 @@ fig_d <- rescale_layer_params(fig_d, size_scale = 0.5, linewidth_scale = 0.5)
 
 ## Compose Figure
 
-Arrange the four panels with patchwork: the two scatter grids each span the full text width, and the two sign-concordance panels share the bottom row. Panel letters follow the order the panels are added, not the layout string.
+Arrange the four panels with patchwork: the two scatter grids each span the full text width, and the two sign-concordance panels share the bottom row. Panel letters follow the order the panels Are added, not the layout string.
 
 ```{r}
 #| label: compose-figure
@@ -281,7 +287,7 @@ fig_validation <- fig_a + fig_b + free(fig_c, side = "r") + fig_d +
     heights = c(2.6, 2.6, 2.2)
   ) +
   plot_annotation(
-    tag_levels = "a"
+    tag_levels = "A"
   ) &
   theme(
     plot.tag = element_text(face = "bold", size = 12)

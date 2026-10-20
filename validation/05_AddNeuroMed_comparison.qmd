@@ -22,6 +22,8 @@ fs::dir_create(here("validation/output"))
 #| echo: false
 
 source(here("custom_func/display_scientific_notation.R"))
+source(here("custom_func/spearman_p_label.R"))
+source(here("custom_func/r_value_label.R"))
 ```
 
 ## Introduction
@@ -199,19 +201,22 @@ es_corr |>
 ```{r}
 #| label: prepare-scatter-labels
 
-# Create correlation labels with parsed expressions for scatter plots
+# Create correlation labels with parsed expressions for scatter plots.
+# P comes from spearman_p_value(): the default cor.test() value, re-run with the
+# t approximation only when the default returns 0 (reviewer R1.5/R2.7), so no
+# label prints P = 0.
 scatter_correlations <- es_long_filtered |>
   summarise(
     cor_test = list(cor.test(ages_effect_size, addneuromed_effect_size, method = "spearman", use = "complete.obs")),
+    cor_pval = spearman_p_value(ages_effect_size, addneuromed_effect_size),
     n_cpgs = n_distinct(cg),
     .by = c(addneuromed_comparison, ages_trajectory)
   ) |>
   mutate(
     cor_estimate = map_dbl(cor_test, ~.$estimate),
-    cor_pval = map_dbl(cor_test, ~.$p.value),
     # Parsed expression labels for italic r and P
-    cor_estimate_label = glue("italic(r) == ~{round(cor_estimate, 2)}"),
-    cor_pval_label = glue("italic(P) == ~{display_scientific_notation(cor_pval)}")
+    cor_estimate_label = r_value_label(cor_estimate),
+    cor_pval_label = spearman_p_label(cor_pval)
   ) |>
   select(-cor_test)
 ```

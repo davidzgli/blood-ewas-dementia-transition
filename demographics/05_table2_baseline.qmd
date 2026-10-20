@@ -1,0 +1,997 @@
+---
+title: "Table 2"
+subtitle: "Baseline characteristics by group as a native Word table (reviewers R1.2 and R2.2)"
+---
+
+```{r}
+#| label: load-packages
+#| echo: false
+
+# tidyverse, here and glue come from .Rprofile. R attaches stats after .Rprofile
+# runs, so filter() is written dplyr::filter() below; compose() is flextable's.
+pacman::p_load(gtsummary, flextable, officer, openxlsx2, xml2, install = FALSE)
+source(here("custom_func/p_value_label.R"))
+```
+
+## Overview
+
+Reviewers R1.2 and R2.2 asked for the baseline characteristics of each group (age, sex and so on) in the main text. This notebook drafts the new main Table 2 by merging submitted Table S1 (covariates, `demographics/02_covariate_table.qmd`) with submitted Table S2 without APOE (clinical and cognitive measures, `demographics/03_baseline_characteristics_excel.qmd`). APOE stays in its own supplementary table.
+
+The table is built with flextable, like Table 1 (`ms/fig_tbl/main_tables.qmd`), because `gt::as_word()` writes files Word cannot open: it reads gt font sizes in pixels as Word half-points and emits ISO-Strict markup into a transitional file. Every number comes from the two saved `tbl_summary` objects; none is typed here.
+
+Outputs (in `demographics/output/`):
+
+- `table2_baseline_by_group.rds`: the flextable object, for `ms/fig_tbl/main_tables.qmd` to print at Gate B;
+- `table2_baseline_by_group_preview.docx`: a stand-alone preview written by `flextable::save_as_docx()`.
+
+## Load the source tables
+
+The two submitted supplementary tables are read as the `tbl_summary` objects their producers save. Table 1's object supplies the reference group sizes.
+
+### Table S1: covariates
+
+Age, sex, smoking status and the six estimated blood cell proportions used as covariates in the EWAS model.
+
+```{r}
+#| label: read-s1
+
+s1 <- read_rds(here("demographics/output/covariate_table_by_dementia_transition.rds"))
+s1$table_body |> select(variable, var_type, row_type, label)
+```
+
+### Table S2 without APOE
+
+Education, body mass index, blood pressure, serum lipids, fasting glucose and the three cognitive composite scores. Its producer used `missing = "no"`, so the printed table hides the missing counts; they are recovered from the object below.
+
+```{r}
+#| label: read-s2
+
+s2 <- read_rds(here("demographics/output/baseline_characteristics_by_dementia_no_apoe.rds"))
+s2$table_body |> select(variable, var_type, row_type, label)
+```
+
+### Table 1 group sizes
+
+Table 1's gt object holds the group order and sizes the manuscript reports.
+
+```{r}
+#| label: read-table1
+
+t1 <- read_rds(here("demographics/output/dementia_category_table_base.rds"))[["_data"]] |>
+  select(transition, count)
+t1
+```
+
+## Check that the sources agree
+
+The two objects must describe the same 2,491 participants in the same six groups, in the manuscript's order, with the same statistics and tests. Each assumption is asserted rather than assumed.
+
+### Group columns and sizes
+
+The `Overall` column and the six group columns are read from each object's header and compared with each other and with Table 1.
+
+```{r}
+#| label: check-groups
+
+group_order <- c("stable_normal", "normal2mci", "stable_mci",
+                 "normal2incid", "mci2incid", "prev")
+
+stat_header <- function(x) {
+  x$table_styling$header |>
+    dplyr::filter(str_detect(column, "^stat_\\d+$"), !hide) |>
+    select(column, level = modify_stat_level, n = modify_stat_n)
+}
+hdr_s1 <- stat_header(s1)
+hdr_s2 <- stat_header(s2)
+
+stopifnot(
+  "S1 and S2 must have identical group columns and sizes" = identical(hdr_s1, hdr_s2),
+  "Overall must come first" = hdr_s1$level[1] == "Overall",
+  "groups must be in the manuscript's order" =
+    identical(hdr_s1$level[-1], group_order),
+  "Table 1 must list the same groups in the same order" =
+    identical(t1$transition, group_order),
+  "group sizes must equal Table 1's" =
+    identical(as.integer(hdr_s1$n[-1]), as.integer(t1$count)),
+  "total must be 2,491" = hdr_s1$n[1] == 2491L,
+  "groups must sum to the total" = sum(hdr_s1$n[-1], na.rm = TRUE) == hdr_s1$n[1]
+)
+
+stat_cols <- hdr_s1$column
+hdr_s1
+```
+
+### Statistics and tests
+
+Both objects must summarise continuous variables as mean (SD) and categorical ones as n (%), and must test with Kruskal-Wallis and chi-squared respectively; the table footnotes state exactly this. Age is already mean (SD) in Table S1, which is the form R2.2 asks the text to match.
+
+```{r}
+#| label: check-statistics
+
+check_stats <- function(x) {
+  types <- x$table_body |> distinct(variable, var_type, test_name)
+  stat  <- unlist(x$inputs$statistic)[types$variable]
+  all(
+    stat[types$var_type == "continuous"] == "{mean} ({sd})",
+    stat[types$var_type == "categorical"] == "{n} ({p}%)",
+    types$test_name[types$var_type == "continuous"] == "kruskal.test",
+    types$test_name[types$var_type == "categorical"] == "chisq.test"
+  )
+}
+
+stopifnot(
+  "S1 statistics or tests differ from the footnotes" = check_stats(s1),
+  "S2 statistics or tests differ from the footnotes" = check_stats(s2),
+  "age must be mean (SD)" = unlist(s1$inputs$statistic)[["age"]] == "{mean} ({sd})",
+  "only continuous and categorical variables are handled" =
+    all(c(s1$table_body$var_type, s2$table_body$var_type) %in%
+          c("continuous", "categorical"))
+)
+```
+
+### Variables present in both tables
+
+A variable summarised in both sources would be kept once, from Table S1, and only if both copies print identical cells.
+
+```{r}
+#| label: check-duplicates
+
+vars_s1 <- unique(s1$table_body$variable)
+vars_s2 <- unique(s2$table_body$variable)
+dup_vars <- intersect(vars_s1, vars_s2)
+
+stopifnot("the same label must not be used by two different variables" =
+            !any(duplicated(c(unique(s1$table_body$var_label),
+                              unique(s2$table_body$var_label)))))
+dup_vars
+```
+
+There are `r length(dup_vars)` shared variables, so nothing is dropped. The S1 variables are `r str_flatten_comma(vars_s1)`; the S2 variables are `r str_flatten_comma(vars_s2)`.
+
+## Source cells
+
+Each object's printed cells come from `as_tibble()`, which applies gtsummary's own number formatting. The *P* values are the exception: they are formatted from the numeric `table_body$p.value`, not by gtsummary, whose default prints 0.007, 0.13 and <0.001. Since 2026-10-19 Table 2 follows the authors' rule (LL's comment on the letter): "NS" (not significant) at *P* ≥ 0.05, two decimals from 0.001 to 0.05, and the bound "< 0.001" below, which also keeps the *P* column narrow enough for the indented rows to fit the label column on the landscape page. This departs from the manuscript's house style (three significant figures; `custom_func/p_value_label.R`) for this table only. Two values could not be printed faithfully with two decimals, so `format_table2_p()` stops on them: a significant *P* in [0.045, 0.05) would print as "0.05", and one in [0.001, 0.005) as "0.00". The label column is taken from `table_body`, because `as_tibble()` keeps the markdown bold markers that `bold_labels()` added.
+
+```{r}
+#| label: source-cells
+
+format_table2_p <- function(p) {
+  stopifnot(
+    "a significant P in [0.045, 0.05) would print as 0.05" = !any(p >= 0.045 & p < 0.05, na.rm = TRUE),
+    "a P in [0.001, 0.005) would print as 0.00" = !any(p >= 0.001 & p < 0.005, na.rm = TRUE)
+  )
+  case_when(
+    is.na(p) ~ NA_character_,
+    p < 0.001 ~ "< 0.001",
+    p >= 0.05 ~ "NS",
+    .default = formatC(p, format = "f", digits = 2)
+  )
+}
+
+source_cells <- function(x) {
+  tb <- as_tibble(x, col_labels = FALSE)
+  stopifnot(
+    "as_tibble() must keep table_body's rows" = nrow(tb) == nrow(x$table_body),
+    "labels must match table_body after removing bold markers" =
+      identical(str_remove_all(tb$label, "^__|__$"), x$table_body$label)
+  )
+  tb |>
+    mutate(
+      label = x$table_body$label,
+      variable = x$table_body$variable,
+      row_type = x$table_body$row_type,
+      src_row = row_number()
+    ) |>
+    select(variable, row_type, label, all_of(stat_cols), p.value, src_row) |>
+    mutate(
+      # "NS" at P >= 0.05, two decimals to 0.001, "< 0.001" below (the authors' rule for Table 2)
+      p.value = format_table2_p(x$table_body$p.value),
+      # a true minus sign in negative means (house rule; gtsummary prints a hyphen)
+      across(all_of(stat_cols), \(v) str_replace_all(v, "(^|\\()-(?=[0-9])", "\\1\u2212")),
+      across(c(all_of(stat_cols), p.value), \(v) replace_na(v, ""))
+    )
+}
+
+cells <- list(s1 = source_cells(s1), s2 = source_cells(s2))
+cells$s2
+```
+
+## Missing data
+
+Table S1 has no missing values. Table S2 was printed with `missing = "no"`, which hid the missing counts. They are taken from the object's own summary statistics (`cards`, statistic `N_miss`), overall and per group.
+
+### Missing counts from the objects
+
+`N_miss` is read for every variable, per group from `cards$tbl_summary` and overall from `cards$add_overall`.
+
+```{r}
+#| label: missing-counts
+
+missing_counts <- function(x) {
+  by_group <- x$cards$tbl_summary |>
+    dplyr::filter(stat_name == "N_miss", context == "missing") |>
+    transmute(
+      variable,
+      level = map_chr(group1_level, as.character),
+      n_miss = map_int(stat, as.integer)
+    )
+  overall <- x$cards$add_overall |>
+    dplyr::filter(stat_name == "N_miss", context == "missing") |>
+    transmute(variable, level = "Overall", n_miss = map_int(stat, as.integer))
+  bind_rows(overall, by_group) |>
+    left_join(stat_header(x) |> select(column, level), by = "level") |>
+    select(variable, column, n_miss) |>
+    pivot_wider(names_from = column, values_from = n_miss) |>
+    select(variable, all_of(stat_cols))
+}
+
+n_miss <- list(s1 = missing_counts(s1), s2 = missing_counts(s2))
+
+stopifnot(
+  "every variable needs a missing count in every column" =
+    all(map_lgl(n_miss, \(m) !anyNA(m))),
+  "group missing counts must sum to the overall count" =
+    all(map_lgl(n_miss, \(m) all(rowSums(m[stat_cols[-1]], na.rm = TRUE) ==
+                                   m[[stat_cols[1]]]))),
+  "Table S1 is expected to have no missing values" =
+    all(n_miss$s1[stat_cols] == 0)
+)
+
+n_miss$s2
+```
+
+### Cross-check against the with-APOE workbook
+
+`demographics/03` also writes the with-APOE table to Excel with `missing = "ifany"`, so gtsummary printed its own Missing rows there. Those rows must equal the counts above for every Table S2 variable.
+
+```{r}
+#| label: missing-crosscheck
+
+xl <- read_xlsx(
+  here("demographics/output/baseline_characteristics_by_dementia.xlsx"),
+  start_row = 3
+)
+names(xl)[1] <- "label"
+
+xl_missing <- xl |>
+  mutate(
+    var_label = if_else(str_detect(label, "^__.*__$"),
+                        str_remove_all(label, "^__|__$"), NA_character_)
+  ) |>
+  fill(var_label) |>
+  dplyr::filter(label == "Missing") |>
+  left_join(s2$table_body |> distinct(variable, var_label), by = "var_label") |>
+  dplyr::filter(!is.na(variable))
+
+xl_values <- xl_missing |>
+  select(variable, 2:(1 + length(stat_cols))) |>
+  set_names(c("variable", stat_cols)) |>
+  mutate(across(all_of(stat_cols), \(v) as.integer(str_remove_all(v, ","))))
+
+missing_s2 <- n_miss$s2 |> dplyr::filter(if_any(all_of(stat_cols[1]), \(v) v > 0))
+
+stopifnot(
+  "the workbook must have a Missing row for exactly the variables with missing data" =
+    setequal(xl_values$variable, missing_s2$variable),
+  "Missing counts must equal the workbook's" =
+    isTRUE(all.equal(
+      arrange(xl_values, variable) |> as.data.frame(),
+      arrange(missing_s2, variable) |> as.data.frame(),
+      check.attributes = FALSE
+    ))
+)
+
+missing_s2
+```
+
+## Assemble the rows
+
+The two sources are interleaved by topic. The layout below names every source variable once, sets its display label, and places it in a section. The table prints no Missing rows (the authors' decision of 2026-10-08, decision 45 of the response list): each summary uses the participants with data for that variable, as the general note says, and the missing counts are still computed above and checked below.
+
+### Layout and labels
+
+Display labels add units, use the cell-type names of the Methods, and drop "score" where the section heading already says it. Every label is listed here so the changes are visible in one place.
+
+```{r}
+#| label: table_layout
+
+table_layout <- tribble(
+  ~section,                           ~source, ~variable,        ~display,
+  "Demographics",                     "s1",    "age",            "Age (years)",
+  "Demographics",                     "s1",    "sex",            "Sex",
+  "Demographics",                     "s2",    "education",      "Education",
+  "Demographics",                     "s1",    "smoking_status", "Smoking status",
+  "Clinical measures",                "s2",    "a1bmi",          "BMI (kg/m\u00b2)",
+  "Clinical measures",                "s2",    "a1sys",          "Systolic BP (mmHg)",
+  "Clinical measures",                "s2",    "a1did",          "Diastolic BP (mmHg)",
+  "Clinical measures",                "s2",    "a1s_chol",       "Serum cholesterol (mmol/L)",
+  "Clinical measures",                "s2",    "a1s_tg",         "Serum triglycerides (mmol/L)",
+  "Clinical measures",                "s2",    "a1s_glu",        "Fasting glucose (mmol/L)",
+  "Cognitive composite scores",       "s2",    "a1memory2",      "Memory",
+  "Cognitive composite scores",       "s2",    "a1speed2",       "Processing speed",
+  "Cognitive composite scores",       "s2",    "a1working2",     "Working memory",
+  "Estimated blood cell proportions", "s1",    "Bcell",          "B lymphocytes",
+  "Estimated blood cell proportions", "s1",    "CD4T",           "CD4+ T lymphocytes",
+  "Estimated blood cell proportions", "s1",    "CD8T",           "CD8+ T lymphocytes",
+  "Estimated blood cell proportions", "s1",    "Eos",            "Eosinophils",
+  "Estimated blood cell proportions", "s1",    "Mono",           "Monocytes",
+  "Estimated blood cell proportions", "s1",    "Neu",            "Neutrophils"
+)
+
+stopifnot(
+  "the layout must place every S1 variable once" =
+    setequal(table_layout$variable[table_layout$source == "s1"], vars_s1),
+  "the layout must place every S2 variable not already in S1 once" =
+    setequal(table_layout$variable[table_layout$source == "s2"], setdiff(vars_s2, dup_vars)),
+  "no variable may appear twice" = !anyDuplicated(table_layout$variable),
+  "display labels must be unique" = !anyDuplicated(table_layout$display)
+)
+
+# Source label -> display label, for the record.
+table_layout |>
+  left_join(
+    bind_rows(s1 = s1$table_body, s2 = s2$table_body, .id = "source") |>
+      distinct(source, variable, source_label = var_label),
+    by = c("source", "variable")
+  ) |>
+  select(section, variable, source_label, display)
+```
+
+### Merged rows
+
+Each variable contributes its label row and its level rows (categorical variables); with `show_missing_rows <- TRUE` it would also get a Missing row with the counts. Section rows separate the four topics. `src` and `src_row` record where every printed cell came from.
+
+```{r}
+#| label: merge-rows
+
+show_missing_rows <- FALSE  # decision 45 (2026-10-08): no Missing rows in Table 2
+
+rows_for <- function(source, variable, display) {
+  out <- cells[[source]] |>
+    dplyr::filter(variable == .env$variable) |>
+    mutate(label = if_else(row_type == "label", display, label), src = source)
+  miss <- n_miss[[source]] |> dplyr::filter(variable == .env$variable)
+  if (show_missing_rows && miss[[stat_cols[1]]] > 0) {
+    out <- bind_rows(
+      out,
+      miss |>
+        mutate(across(all_of(stat_cols), \(v) format(v, big.mark = ",", trim = TRUE)),
+               row_type = "missing", label = "Missing", p.value = "",
+               src = source, src_row = NA_integer_)
+    )
+  }
+  out
+}
+
+merged <- table_layout |>
+  mutate(rows = pmap(list(source, variable, display), rows_for)) |>
+  select(section, rows) |>
+  unnest(rows) |>
+  group_by(section = fct_inorder(section)) |>
+  group_modify(\(d, k) bind_rows(tibble(row_type = "section", label = as.character(k$section)), d)) |>
+  ungroup() |>
+  mutate(across(c(all_of(stat_cols), p.value), \(v) replace_na(v, "")))
+
+merged |> select(row_type, label, all_of(stat_cols), p.value)
+```
+
+## Build the Word table
+
+The flextable follows Table 1: Times New Roman, 10 pt in the header and body and 8 pt in the footer, a 1 pt rule above the header and below the body and a 0.5 pt rule under the header. Footnote markers are numbered in order of first appearance, header first, as gt numbers them in Table 1.
+
+### Header and footnotes
+
+The group names and sizes come from the objects' headers. The footnote texts are typed here, and their facts have different sources, listed in the next section; the general note and footnote 1 are asserted above and recomputed from the participant-level data under "Verify the preview".
+
+```{r}
+#| label: header-and-footnotes
+
+col_keys <- c("label", stat_cols, "p.value")
+group_labels <- setNames(hdr_s1$level, stat_cols)
+n_labels <- setNames(paste0("N = ", format(hdr_s1$n, big.mark = ",", trim = TRUE)), stat_cols)
+
+# The N strings must be the ones gtsummary printed in the source header.
+src_n <- s1$table_styling$header |>
+  dplyr::filter(column %in% stat_cols) |>
+  mutate(n_str = str_extract(label, "N = [0-9,]+"))
+stopifnot("N labels must match the source header" =
+            identical(unname(n_labels[src_n$column]), src_n$n_str))
+
+general_note <- paste(
+  "Values are mean (SD) for continuous variables and n (%) for categorical variables,",
+  "among the participants with data for that variable.",
+  "Groups are defined in Table 1; APOE genotype by group is given in Table S2.",
+  "BMI, body mass index; BP, blood pressure; SD, standard deviation."
+)
+
+# Footnote anchors, in order of first appearance: header first, then body rows.
+notes <- tribble(
+  ~anchor,                            ~text,
+  "p.value",                          "Kruskal-Wallis rank sum test for continuous variables and Pearson's chi-squared test for categorical variables, across the six groups. NS, not significant at the 0.05 level.",
+  "Education",                        "Highest school attended: Primary, about 6 years of schooling or less; Secondary, about 9 years or less; College, about 13 years; University, about 14 years or more.",
+  "Cognitive composite scores",       "Memory: modified California Verbal Learning Test (total recall over trials 1–4 and delayed recall); processing speed: Figure Comparison, Digit Symbol Substitution Test and Stroop parts 1 and 2; working memory: CANTAB Spatial Working Memory (errors), Digits Backward and Stroop part 3. Each composite is the mean of its tests' z-scores, standardized to all AGES-I participants tested; higher values indicate better performance.",
+  "Estimated blood cell proportions", "Leukocyte proportions estimated from the DNA methylation data by reference-based deconvolution; these six cell types are the cell-composition covariates of the EWAS model."
+) |>
+  mutate(mark = as.character(row_number()))
+
+body_anchor_rows <- match(notes$anchor[-1], merged$label)
+stopifnot(
+  "every body footnote anchor must label exactly one row" =
+    !anyNA(body_anchor_rows) &&
+    all(map_int(notes$anchor[-1], \(a) sum(merged$label == a, na.rm = TRUE)) == 1L),
+  "body markers must follow the row order" = !is.unsorted(body_anchor_rows)
+)
+notes
+```
+
+### Where the footnote facts come from
+
+Footnotes 2 to 4 are not stated in the source objects. Footnotes 2 and 3 were rewritten on 2026-10-07 (response-list decisions 8 and 38) from the AGES derivation programs, read on the AGES data-management workstation (documentation only; quotes in `ms/revision/response_evidence.md`, section "AGES study documentation behind decisions 8, 14 and 38").
+
+- Footnote 3, component tests and construction: `SAS PROGRAMS/ages_cog1_composite_scores_v3.sas`. Each test is z-scored against every participant in the AGES-I cognitive file and the composite is the mean of its tests' z-scores (`memory = (zcvlt + zcvltd)/2`, a modified CVLT: trials 1–4 total recall and delayed recall; `SPEED = (ZFCOMP - ZSTROOP1 - ZSTROOP2 + ZDSST)/4`; `working = (zdigb - zcantab - zstroop3)/3`, where the CANTAB score is Spatial Working Memory total errors). Stroop times and CANTAB errors enter with a minus sign, so higher is better for all three. The composite itself is not rescaled, which is why the full-cohort SDs below are under 1. The SAS variable labels checked below name the same tests, less specifically.
+- Footnote 2, education: `SAS PROGRAMS/ages_education_datastep_nia_rev2009.sas` builds `A1EDUCATION` ("A1: Education, 4 categories") from the highest school attended. No AGES dictionary or program gives years; the approximate years are those of Vilmundardottir et al., *BMC Geriatr* 2025 (doi 10.1186/s12877-025-06462-y), Methods, for the same four categories, and are read as approximate (hence "about").
+- Footnote 4, cell-type names: from the Methods (`ms/write-ms/methods.qmd`).
+
+```{r}
+#| label: footnote-sources
+
+composite_vars <- c(memory = "A1MEMORY2", speed = "A1SPEED2", working = "A1WORKING2")
+derived_path   <- here("data/private/ages1_derived_variables_nov2021.sas7bdat")
+
+sas_labels <- haven::read_sas(derived_path, n_max = 0) |>
+  select(all_of(c(composite_vars, education = "A1EDUCATION"))) |>
+  map_chr(\(v) attr(v, "label"))
+
+# The component tests footnote 3 names, as they appear in the SAS labels.
+components <- list(memory  = "CVLT",
+                   speed   = c("Figure Comp", "DSST", "Stroop1,2"),
+                   working = c("CANTAB", "Digits Backward", "Stroop3"))
+
+full_cohort <- haven::read_sas(derived_path, col_select = all_of(unname(composite_vars))) |>
+  pivot_longer(everything(), names_to = "sas_variable") |>
+  summarise(n = sum(!is.na(value), na.rm = TRUE), mean = mean(value, na.rm = TRUE),
+            sd = sd(value, na.rm = TRUE), .by = sas_variable)
+
+# Direction: prevalent dementia against stable normal in the analytic sample.
+composite_cols <- tolower(unname(composite_vars))
+group_means <- s2$inputs$data |>
+  dplyr::filter(.data[[s2$inputs$by]] %in% c("stable_normal", "prev")) |>
+  summarise(across(all_of(composite_cols), \(v) mean(v, na.rm = TRUE)),
+            .by = all_of(s2$inputs$by))
+prev_row   <- group_means[[s2$inputs$by]] == "prev"
+normal_row <- group_means[[s2$inputs$by]] == "stable_normal"
+
+stopifnot(
+  "footnote 3's component tests must appear in the SAS labels" =
+    all(imap_lgl(components, \(tests, k) all(str_detect(sas_labels[[k]], fixed(tests))))),
+  "the SAS education variable must have four categories" =
+    str_detect(sas_labels[["education"]], "4 categories"),
+  "prevalent dementia must score lower than stable normal on every composite" =
+    all(unlist(group_means[prev_row, composite_cols]) <
+          unlist(group_means[normal_row, composite_cols]))
+)
+
+tibble(variable = names(sas_labels), sas_label = sas_labels)
+full_cohort
+```
+
+### The flextable
+
+Section rows span the full width and level and Missing rows are indented under their variable; as in Table 1, the label column is left-aligned and the value columns are right-aligned. Variable labels are not bold (Tables S1 and S2 used `bold_labels()`) because the bold section rows already mark the top level, and side padding is 3 pt rather than flextable's default 5 pt, to save width.
+
+```{r}
+#| label: build-flextable
+
+body_df <- merged |> select(all_of(col_keys)) |> as.data.frame()
+i_section <- which(merged$row_type == "section")
+i_indent  <- which(merged$row_type %in% c("level", "missing"))
+n_col     <- length(col_keys)
+pad_side_pt   <- 3   # left and right padding of every cell
+pad_indent_pt <- 10  # left padding of level and Missing rows
+
+ft <- flextable(body_df, col_keys = col_keys) |>
+  set_header_labels(values = c(list(label = "Characteristic"),
+                               as.list(group_labels), list(p.value = "P value"))) |>
+  add_header_row(values = c("", unname(n_labels), ""), top = FALSE) |>
+  merge_at(i = 1:2, j = 1, part = "header") |>
+  merge_at(i = 1:2, j = n_col, part = "header") |>
+  merge_h_range(i = i_section, j1 = 1, j2 = n_col, part = "body")
+
+# P values below 0.01 are set as "m × 10" plus the exponent as a superscript chunk, rather
+# than as Unicode superscript characters, which Word may draw from a fallback font.
+plain_exponent <- \(x) chartr("\u207b\u2070\u00b9\u00b2\u00b3\u2074\u2075\u2076\u2077\u2078\u2079",
+                               "\u{2212}0123456789", x)
+for (i in which(str_detect(body_df$p.value, "\u00d7"))) {
+  p_parts <- str_match(body_df$p.value[i], "^(.+ \u00d7 10)(\\S+)$")
+  stopifnot(!anyNA(p_parts))
+  ft <- flextable::compose(ft, i = i, j = n_col, part = "body",
+                           value = as_paragraph(p_parts[2], as_sup(plain_exponent(p_parts[3]))))
+}
+
+# Footnote markers as superscripts on their anchors.
+ft <- flextable::compose(ft, i = 1, j = n_col, part = "header",
+              value = as_paragraph(as_i("P"), " value", as_sup(notes$mark[1])))
+for (k in seq_len(nrow(notes))[-1]) {
+  ft <- flextable::compose(ft, i = body_anchor_rows[k - 1], j = 1, part = "body",
+                value = as_paragraph(notes$anchor[k], as_sup(notes$mark[k])))
+}
+
+note_chunks <- list()
+for (k in seq_len(nrow(notes))) {
+  note_chunks <- c(note_chunks, list(as_sup(notes$mark[k]), paste0(" ", notes$text[k], " ")))
+}
+
+ft <- ft |>
+  add_footer_lines(values = general_note) |>
+  add_footer_lines(values = do.call(as_paragraph, note_chunks)) |>
+  font(fontname = "Times New Roman", part = "all") |>
+  fontsize(size = 10, part = "header") |>
+  fontsize(size = 10, part = "body") |>
+  fontsize(size = 8, part = "footer") |>
+  bold(part = "header") |>
+  bold(i = i_section, part = "body") |>
+  align(j = 1, align = "left", part = "all") |>
+  align(j = 2:n_col, align = "right", part = "header") |>
+  align(j = 2:n_col, align = "right", part = "body") |>
+  align(align = "left", part = "footer") |>
+  valign(valign = "bottom", part = "header") |>
+  padding(padding.top = 2, padding.bottom = 2, padding.left = pad_side_pt,
+          padding.right = pad_side_pt, part = "all") |>
+  padding(i = i_indent, j = 1, padding.left = pad_indent_pt, part = "body") |>
+  border_remove() |>
+  hline_top(part = "header", border = fp_border(width = 1)) |>
+  hline_bottom(part = "header", border = fp_border(width = 0.5)) |>
+  hline_bottom(part = "body", border = fp_border(width = 1))
+```
+
+### Column widths
+
+The table uses flextable's fixed layout, with column widths set for a landscape US Letter page with 1-inch margins, less the cell margins of the one-cell wrapper Quarto puts around a cross-referenced table. The autofit layout that Table 1 uses writes no `w:tblGrid`, an element the Word schema requires, and pandoc then reads the table as rows with no cells.
+
+Text is measured in R, with the font that stands in for Times New Roman on this machine, and without padding; the padding each cell actually has is added separately, because `dim_pretty()` charges padding at more than its value (shown below the chunk).
+
+```{r}
+#| label: width
+
+# The landscape page of the preview and, at Gate B, of Table 2 in main_tables.docx.
+# Margins are set explicitly: officer's page_mar() defaults to 1417 twips (2.5 cm).
+page_portrait_in <- c(width = 8.5, height = 11)
+margin_in        <- 1
+text_width_in    <- page_portrait_in[["height"]] - 2 * margin_in
+
+# At Gate B the table sits inside Quarto's float wrapper, a one-cell table whose
+# "Table" style (word/styles.xml of ms/submission/table1.docx) has 108-twip left
+# and right cell margins, so the table is kept that much narrower than the text.
+wrapper_margins_in <- 2 * 108 / 1440
+table_budget_in    <- text_width_in - wrapper_margins_in
+
+# The measuring font must be Times New Roman or Liberation Serif, which has the
+# same character widths by design.
+measure_font <- basename(systemfonts::match_fonts("Times New Roman")$path)
+stopifnot("text must be measured with Times New Roman metrics" =
+            str_detect(measure_font, "^(Times|times|LiberationSerif)"))
+
+# One-line text widths without padding. The footer and the merged section rows
+# are left out: they wrap or span, and dim_pretty() would charge their full
+# one-line width to single columns.
+unpadded <- \(x) padding(x, padding.left = 0, padding.right = 0, part = "all")
+measure <- function(df) {
+  flextable(df) |>
+    font(fontname = "Times New Roman", part = "all") |>
+    fontsize(size = 10, part = "all") |>
+    unpadded()
+}
+body_unpadded <- dim_pretty(measure(body_df[-i_section, col_keys]), part = "body")$widths
+text_in <- pmax(body_unpadded, dim_pretty(unpadded(ft), part = "header")$widths)
+names(text_in) <- col_keys
+
+# The P column's scientific values print their exponent as a superscript chunk, which Word
+# sets at about two thirds of the body size; measured as full-size text, "7.17 × 10⁻³" would
+# take width the label column needs. So the mantissa is measured at 10 pt and the exponent at
+# sup_scale times that (0.7, slightly more than Word uses).
+sup_scale <- 0.7
+p_strings <- body_df$p.value[-i_section]
+p_sci <- str_match(p_strings, "^(.+ \u00d7 10)(\\S+)$")
+text_width <- \(x, size) gdtools::strings_sizes(x, fontname = "Times New Roman", fontsize = size)$width
+p_width_in <- if_else(
+  is.na(p_sci[, 1]),
+  text_width(p_strings, 10),
+  text_width(coalesce(p_sci[, 2], ""), 10) + text_width(plain_exponent(coalesce(p_sci[, 3], "")), 10 * sup_scale)
+)
+p_header_in <- dim_pretty(unpadded(ft), part = "header")$widths[n_col]
+text_in[["p.value"]] <- max(c(p_width_in, p_header_in), na.rm = TRUE)
+
+# Without padding, dim_pretty() must return the plain text width.
+body_text_in <- map_dbl(col_keys, \(k) max(gdtools::strings_sizes(
+  body_df[-i_section, k], fontname = "Times New Roman", fontsize = 10)$width, na.rm = TRUE))
+stopifnot("unpadded dim_pretty() widths must equal the text widths" =
+            isTRUE(all.equal(unname(body_unpadded), body_text_in)))
+
+# What dim_pretty() charges for the side padding, for the record.
+body_padded <- dim_pretty(measure(body_df[-i_section, col_keys]) |>
+                            padding(padding.left = pad_side_pt, padding.right = pad_side_pt,
+                                    part = "all"),
+                          part = "body")$widths
+pad_charged_pt <- unique(round(72 * (body_padded - body_unpadded), 2))
+
+# Natural (one-line) widths include the padding. Value columns get their natural
+# width plus slack_pt, so that a small difference between R's and Word's text
+# measurement cannot wrap a number. The label column takes the rest of the
+# budget, so the longest variable labels wrap.
+pt       <- 1 / 72
+slack_pt <- 2
+natural_in    <- text_in + 2 * pad_side_pt * pt
+table_width_in <- sum(natural_in, na.rm = TRUE)
+data_in       <- natural_in[-1] + slack_pt * pt
+label_in      <- table_budget_in - sum(data_in, na.rm = TRUE)
+col_widths_in <- c(label = label_in, data_in)
+
+# Indented rows (levels and Missing) must stay on one line, with the same slack.
+indent_text_in <- max(gdtools::strings_sizes(merged$label[i_indent], fontname = "Times New Roman",
+                                             fontsize = 10)$width, na.rm = TRUE)
+indent_in <- indent_text_in + (pad_indent_pt + pad_side_pt + slack_pt) * pt
+
+# Variable labels that wrap at this width. Footnote markers sit on section rows
+# and on Education, whose label is far shorter than the column.
+label_rows    <- merged$label[merged$row_type == "label"]
+label_line_in <- gdtools::strings_sizes(label_rows, fontname = "Times New Roman",
+                                        fontsize = 10)$width + 2 * pad_side_pt * pt
+wrapped_labels <- label_rows[label_line_in > label_in]
+
+stopifnot(
+  "level and Missing rows must fit the label column on one line" = indent_in <= label_in,
+  "the label column must be at least 1 inch wide" = label_in >= 1,
+  "the table must fit its budget" =
+    sum(col_widths_in, na.rm = TRUE) <= table_budget_in + 1e-9
+)
+
+ft <- ft |>
+  width(j = col_keys, width = col_widths_in) |>
+  set_table_properties(layout = "fixed")
+
+round(rbind(text = text_in, natural = natural_in, set = col_widths_in), 3)
+ft
+```
+
+Text was measured with `r measure_font`, and `dim_pretty()` charged the `r pad_side_pt` + `r pad_side_pt` pt of side padding as `r str_flatten_comma(pad_charged_pt)` pt, which is why the padding is added by hand. The natural width (every cell on one line, with padding) is `r sprintf("%.2f", table_width_in)` inches: `r sprintf("%.2f", natural_in[["label"]])` for the label column, at most `r sprintf("%.2f", max(natural_in[stat_cols], na.rm = TRUE))` for a value column and `r sprintf("%.2f", natural_in[["p.value"]])` for the *P* value. That is more than the 6.5 inches of a portrait page and the `r sprintf("%.2f", table_budget_in)` inches available on a landscape page (`r text_width_in` inches of text less `r sprintf("%.2f", wrapper_margins_in)` inch of wrapper margins). The value columns are therefore set to their natural width plus `r slack_pt` pt, and the label column gets the remaining `r sprintf("%.2f", label_in)` inches, so `r length(wrapped_labels)` variable labels wrap to two lines: `r str_flatten_comma(wrapped_labels)`. Level and Missing rows stay on one line (widest `r sprintf("%.2f", indent_in)` inches, slack included).
+
+## Save
+
+The flextable object is saved for `ms/fig_tbl/main_tables.qmd`, and a landscape preview is written with `save_as_docx()`.
+
+```{r}
+#| label: save
+
+fs::dir_create(here("demographics/output"))
+ft_path   <- here("demographics/output/table2_baseline_by_group.rds")
+docx_path <- here("demographics/output/table2_baseline_by_group_preview.docx")
+
+write_rds(ft, ft_path)
+save_as_docx(
+  ft,
+  path = docx_path,
+  pr_section = prop_section(
+    page_size = page_size(width = page_portrait_in[["width"]],
+                          height = page_portrait_in[["height"]], orient = "landscape"),
+    page_margins = page_mar(bottom = margin_in, top = margin_in,
+                            right = margin_in, left = margin_in)
+  )
+)
+```
+
+## Verify the preview
+
+The preview is checked three ways: by counting in its XML, by reading every cell back and comparing it with the source objects' cells, and by recomputing every printed value from the participant-level data inside those objects. The XML checks target the defects that made gt's Word output unreadable (ISO-Strict markup and a 3 pt body) and the table grid the schema requires; they are not a full schema validation, and only opening the file in Word shows that Word opens it.
+
+### Word markup
+
+There must be no ISO-Strict `w:start`/`w:end` elements, `w:jc` must be only left, right or center, every run must be Times New Roman, and the header and body must use one font size (10 pt = 20 half-points) and the footer another (8 pt = 16). The table must also have a fixed layout and one `w:gridCol` per column at the widths set above, every row must cover all the grid columns, and the grid must fit both the landscape page with 1-inch margins and the narrower Gate B budget.
+
+```{r}
+#| label: verify-xml
+
+xml_dir <- tempfile("table2_docx_")
+dir.create(xml_dir)
+unzip(docx_path, files = "word/document.xml", exdir = xml_dir)
+doc <- read_xml(file.path(xml_dir, "word/document.xml"))
+ns  <- xml_ns(doc)
+
+n_strict <- length(xml_find_all(doc, "//w:start | //w:end", ns))
+jc_vals  <- xml_attr(xml_find_all(doc, "//w:jc", ns), "w:val", ns)
+
+tbls <- xml_find_all(doc, "//w:tbl", ns)
+rows <- xml_find_all(tbls[[1]], "./w:tr", ns)
+n_footer <- 2L
+is_footer <- seq_along(rows) > length(rows) - n_footer
+
+run_sizes <- function(rs) {
+  unique(xml_attr(xml_find_all(rs, ".//w:rPr/w:sz", ns), "w:val", ns))
+}
+size_main   <- run_sizes(rows[!is_footer])
+size_footer <- run_sizes(rows[is_footer])
+
+fonts <- xml_find_all(tbls[[1]], ".//w:rFonts", ns)
+font_names <- unique(unlist(map(c("w:ascii", "w:hAnsi", "w:cs", "w:eastAsia"),
+                                 \(a) xml_attr(fonts, a, ns))))
+font_names <- font_names[!is.na(font_names)]
+n_runs <- length(xml_find_all(tbls[[1]], ".//w:r", ns))
+n_runs_with_font <- length(xml_find_all(tbls[[1]], ".//w:r[w:rPr/w:rFonts]", ns))
+
+# Table grid and layout. A cell without w:gridSpan covers one grid column.
+tw_per_in <- 1440
+layout_type <- xml_attr(xml_find_all(tbls[[1]], "./w:tblPr/w:tblLayout", ns), "w:type", ns)
+grid_tw <- as.integer(xml_attr(xml_find_all(tbls[[1]], "./w:tblGrid/w:gridCol", ns), "w:w", ns))
+row_grid_cols <- map_int(rows, \(r) {
+  spans <- map_chr(xml_find_all(r, "./w:tc", ns),
+                   \(tc) xml_attr(xml_find_first(tc, "./w:tcPr/w:gridSpan", ns), "w:val", ns))
+  sum(replace_na(as.integer(spans), 1L), na.rm = TRUE)
+})
+
+# Page: size, orientation and margins from the section properties.
+sect   <- xml_find_first(doc, "/w:document/w:body/w:sectPr", ns)
+pg_sz  <- xml_find_first(sect, "./w:pgSz", ns)
+pg_mar <- xml_find_first(sect, "./w:pgMar", ns)
+page_tw <- map_int(c(w = "w:w", h = "w:h"), \(a) as.integer(xml_attr(pg_sz, a, ns)))
+mar_tw  <- map_int(c(top = "w:top", bottom = "w:bottom", left = "w:left", right = "w:right"),
+                   \(a) as.integer(xml_attr(pg_mar, a, ns)))
+text_width_tw <- page_tw[["w"]] - mar_tw[["left"]] - mar_tw[["right"]]
+
+markup <- tibble(
+  check = c("tables in the file", "w:start/w:end elements", "w:jc values",
+            "header/body font size (half-points)", "footer font size (half-points)",
+            "fonts named", "runs without an explicit font", "table layout",
+            "w:gridCol elements", "grid width (twips)", "page text width (twips)",
+            "Gate B budget (twips)", "grid columns covered per row",
+            "page width x height (twips)", "page orientation", "margins (twips)"),
+  value = c(length(tbls), n_strict, str_flatten_comma(sort(unique(jc_vals))),
+            str_flatten_comma(size_main), str_flatten_comma(size_footer),
+            str_flatten_comma(font_names), n_runs - n_runs_with_font,
+            str_flatten_comma(layout_type), length(grid_tw), sum(grid_tw, na.rm = TRUE),
+            text_width_tw, floor(table_budget_in * tw_per_in),
+            str_flatten_comma(unique(row_grid_cols)), str_flatten(page_tw, " x "),
+            xml_attr(pg_sz, "w:orient", ns), str_flatten_comma(unique(mar_tw)))
+)
+
+stopifnot(
+  "exactly one table" = length(tbls) == 1L,
+  "no ISO-Strict w:start/w:end" = n_strict == 0L,
+  "w:jc only left/right/center" = all(jc_vals %in% c("left", "right", "center")),
+  "header and body at 10 pt only" = identical(size_main, "20"),
+  "footer at 8 pt only" = identical(size_footer, "16"),
+  "Times New Roman only" = identical(font_names, "Times New Roman"),
+  "every run names its font" = n_runs == n_runs_with_font,
+  "fixed table layout" = identical(layout_type, "fixed"),
+  "one w:gridCol per column" = length(grid_tw) == n_col,
+  "grid widths are the widths set above" =
+    all(abs(grid_tw - col_widths_in * tw_per_in) <= 1),
+  "every row covers every grid column" = all(row_grid_cols == n_col),
+  "landscape page" = identical(xml_attr(pg_sz, "w:orient", ns), "landscape") &&
+    page_tw[["w"]] > page_tw[["h"]],
+  "1-inch margins" = all(mar_tw == margin_in * tw_per_in),
+  "page text width as assumed" = text_width_tw == text_width_in * tw_per_in,
+  "grid fits the page's text width" = sum(grid_tw, na.rm = TRUE) <= text_width_tw,
+  "grid fits the Gate B budget" = sum(grid_tw, na.rm = TRUE) <= table_budget_in * tw_per_in
+)
+markup
+```
+
+### Every cell against the sources
+
+The preview is read back with `officer::docx_summary()`. Header cells must give the group names and sizes; every body cell must equal the source object's cell for that variable, row and column, or the object's missing count for a Missing row; and every source cell must appear, so nothing was dropped.
+
+```{r}
+#| label: verify-cells
+
+cells_docx <- read_docx(docx_path) |>
+  docx_summary() |>
+  dplyr::filter(content_type == "table cell") |>
+  mutate(text = str_squish(text))
+
+grid <- cells_docx |>
+  select(row_id, cell_id, text, is_header, row_span) |>
+  arrange(row_id, cell_id)
+
+# Header: two rows, group names then sizes. "Characteristic" and "P value" span
+# both rows, and docx_summary() omits the merged-away cells, so read by cell_id.
+hdr <- grid |> dplyr::filter(is_header)
+hdr_cell <- \(row, ids) hdr |>
+  dplyr::filter(row_id == row, cell_id %in% ids) |>
+  arrange(cell_id) |>
+  pull(text)
+group_ids <- 2:(n_col - 1)
+stopifnot(
+  "two header rows" = n_distinct(hdr$row_id) == 2L,
+  "Characteristic and P value span both header rows" =
+    identical(hdr |> dplyr::filter(row_id == min(row_id, na.rm = TRUE), cell_id %in% c(1, n_col)) |>
+                pull(row_span), c(2L, 2L)),
+  "header row 1: Characteristic and P value" =
+    identical(hdr_cell(min(hdr$row_id, na.rm = TRUE), c(1, n_col)),
+              c("Characteristic", paste0("P value", notes$mark[1]))),
+  "header row 1: group names" =
+    identical(hdr_cell(min(hdr$row_id, na.rm = TRUE), group_ids), unname(group_labels)),
+  "header row 2: group sizes" =
+    identical(hdr_cell(max(hdr$row_id, na.rm = TRUE), group_ids), unname(n_labels))
+)
+
+# Body rows in the docx, in order, excluding the two footer lines.
+body_ids <- grid |> dplyr::filter(!is_header) |> distinct(row_id) |> pull(row_id)
+body_ids <- head(body_ids, -n_footer)
+stopifnot("one docx row per merged row" = length(body_ids) == nrow(merged))
+
+docx_body <- map(body_ids, \(r) grid |> dplyr::filter(row_id == r) |> pull(text))
+
+# Expected cells, rebuilt directly from the source objects via the row provenance.
+mark_free <- \(x) str_remove(x, "\\d+$")
+n_checked <- 0L
+for (r in seq_len(nrow(merged))) {
+  got <- docx_body[[r]]
+  row <- merged[r, ]
+  if (row$row_type == "section") {
+    stopifnot("section rows span one merged cell" = length(got) == 1L,
+              "section label" = mark_free(got[1]) == row$label)
+    next
+  }
+  stopifnot("data rows have one cell per column" = length(got) == n_col)
+  if (row$row_type == "missing") {
+    m <- n_miss[[row$src]] |> dplyr::filter(variable == row$variable)
+    want <- c("Missing", format(unlist(m[stat_cols]), big.mark = ",", trim = TRUE), "")
+  } else {
+    srow <- cells[[row$src]][row$src_row, ]
+    lab  <- if (row$row_type == "label") {
+      table_layout$display[table_layout$variable == row$variable]
+    } else {
+      srow$label
+    }
+    want <- c(lab, unlist(srow[stat_cols]), plain_exponent(srow$p.value))
+  }
+  got[1] <- if (row$label %in% notes$anchor) mark_free(got[1]) else got[1]
+  if (!identical(unname(got), unname(want))) {
+    stop("cell mismatch in row ", r, ": ", str_flatten_comma(got), " vs ",
+         str_flatten_comma(want))
+  }
+  n_checked <- n_checked + length(want)
+}
+
+# Nothing dropped: every source cell of every placed variable has a docx row.
+placed <- merged |> dplyr::filter(row_type %in% c("label", "level")) |>
+  count(src, name = "n_rows")
+expected <- map_int(c(s1 = "s1", s2 = "s2"), \(s) {
+  sum(cells[[s]]$variable %in% table_layout$variable[table_layout$source == s], na.rm = TRUE)
+})
+stopifnot("every source row is printed once" =
+            identical(setNames(placed$n_rows, placed$src), expected))
+
+n_checked
+```
+
+All `r n_checked` printed cells outside the section rows equal their source values, and all `r sum(expected, na.rm = TRUE)` source rows are printed once.
+
+### Every value recomputed from the participant-level data
+
+Each source object keeps the participant-level data it summarised (`inputs$data`), and every printed value is recomputed from it: means and SDs, counts and percentages, missing counts, the group sizes in the header and the *P* values of the two tests. A printed value passes when the recomputed value rounds to it at its printed decimals, which also checks the footnotes' claims (percentages of participants with data, summaries without the missing values, the tests named).
+
+```{r}
+#| label: verify-recompute
+
+src_data  <- list(s1 = s1$inputs$data, s2 = s2$inputs$data)
+by_var    <- c(s1 = s1$inputs$by, s2 = s2$inputs$by)
+col_level <- setNames(hdr_s1$level, stat_cols)   # "Overall", then the six groups
+
+stopifnot(
+  "each source must hold one row per participant, each with a group" =
+    all(map_lgl(names(src_data), \(s) nrow(src_data[[s]]) == hdr_s1$n[1] &&
+                  !anyNA(src_data[[s]][[by_var[[s]]]])))
+)
+
+in_col <- function(s, col) {
+  g <- as.character(src_data[[s]][[by_var[[s]]]])
+  if (col_level[[col]] == "Overall") rep(TRUE, length(g)) else g == col_level[[col]]
+}
+
+# A printed number stands for every value that rounds to it at its printed
+# decimals; "<x" and ">x" are gtsummary's bounds for very small and large values.
+matches_printed <- function(printed, value) {
+  printed <- str_remove_all(printed, ",") |> str_replace("^\u2212", "-")   # a leading true minus
+  if (printed == "NS") return(value >= 0.05)   # Table 2's "not significant"
+  # A house-style P below 0.01, "m × 10−e": three significant figures, so the mantissa is
+  # good to half a unit in its second decimal
+  if (str_detect(printed, "\u00d7")) {
+    sci <- str_match(printed, "^([0-9.]+) \u00d7 10\u2212([0-9]+)$")
+    return(!anyNA(sci) && abs(value * 10^as.numeric(sci[3]) - as.numeric(sci[2])) <= 0.005 + 1e-9)
+  }
+  bound   <- as.numeric(str_remove(printed, "^[<>]"))
+  if (str_starts(printed, "<")) return(value < bound)
+  if (str_starts(printed, ">")) return(value > bound)
+  decimals <- replace_na(str_length(str_extract(printed, "(?<=\\.)\\d+$")), 0L)
+  abs(bound - value) <= 0.5 * 10^-decimals + 1e-9
+}
+
+quiet_chisq  <- quietly(chisq.test)
+group_test_p <- function(x, g) {
+  if (is.numeric(x)) kruskal.test(x, g)$p.value else quiet_chisq(x, g)$result$p.value
+}
+
+# One record per printed cell, with the number of values it holds.
+check_stat_cell <- function(row, x, xs, cell) {
+  if (row$row_type == "missing") {
+    return(c(values = 1, ok = as.integer(str_remove_all(cell, ",")) == sum(is.na(xs), na.rm = TRUE)))
+  }
+  if (row$row_type == "level") {
+    parts <- str_match(cell, "^([0-9,]+) \\(([<>]?[0-9.]+)%\\)$")
+    n <- sum(xs == row$label, na.rm = TRUE)
+    return(c(values = 2, ok = row$label %in% levels(x) && !anyNA(parts) &&
+               as.integer(str_remove_all(parts[2], ",")) == n &&
+               matches_printed(parts[3], 100 * n / sum(!is.na(xs), na.rm = TRUE))))
+  }
+  if (is.numeric(x)) {
+    # a negative mean must carry a true minus, never a hyphen (house rule)
+    parts <- str_match(cell, "^(\u2212?[0-9.,]+) \\((\u2212?[0-9.,]+)\\)$")
+    return(c(values = 2, ok = !anyNA(parts) &&
+               matches_printed(parts[2], mean(xs, na.rm = TRUE)) &&
+               matches_printed(parts[3], sd(xs, na.rm = TRUE))))
+  }
+  c(values = 0, ok = cell == "")   # a categorical variable's own row has no statistics
+}
+
+recheck <- list()
+for (r in seq_len(nrow(merged))) {
+  row <- merged[r, ]
+  if (row$row_type == "section") next
+  got <- docx_body[[r]]
+  x   <- src_data[[row$src]][[row$variable]]
+  for (k in seq_along(stat_cols)) {
+    res <- check_stat_cell(row, x, x[in_col(row$src, stat_cols[k])], got[k + 1])
+    recheck[[length(recheck) + 1]] <- tibble(row_index = r, column = stat_cols[k], printed = got[k + 1],
+                                             values = res[["values"]], ok = res[["ok"]] == 1)
+  }
+  # The P value sits on the variable's own row; level and Missing rows leave it blank.
+  p_ok <- if (row$row_type == "label") {
+    matches_printed(got[n_col], group_test_p(x, src_data[[row$src]][[by_var[[row$src]]]]))
+  } else {
+    got[n_col] == ""
+  }
+  p_values <- as.numeric(row$row_type == "label")
+  recheck[[length(recheck) + 1]] <- tibble(row_index = r, column = "p.value", printed = got[n_col],
+                                           values = p_values, ok = p_ok)
+}
+recheck <- bind_rows(recheck)
+
+# Header sizes, recomputed from each source.
+header_n_docx <- hdr_cell(max(hdr$row_id, na.rm = TRUE), group_ids)
+header_n_ok <- map_lgl(names(src_data), \(s) identical(
+  header_n_docx,
+  paste0("N = ", format(map_int(stat_cols, \(col) sum(in_col(s, col), na.rm = TRUE)),
+                        big.mark = ",", trim = TRUE))
+))
+
+# With show_missing_rows, Missing rows appear exactly for the variables with any missing
+# value; without it, none appears.
+has_missing_row <- table_layout$variable %in% merged$variable[merged$row_type == "missing"]
+any_missing <- map2_lgl(table_layout$source, table_layout$variable,
+                        \(s, v) anyNA(src_data[[s]][[v]]))
+
+stopifnot(
+  "every printed cell must match its recomputation" = all(recheck$ok),
+  "header sizes must equal the participant counts of both sources" = all(header_n_ok),
+  "Missing rows must appear exactly as show_missing_rows says" =
+    if (show_missing_rows) identical(has_missing_row, any_missing) else !any(has_missing_row)
+)
+
+n_recomputed <- sum(recheck$values, na.rm = TRUE) + length(header_n_docx)
+recheck |>
+  summarise(cells = n(), values = sum(values, na.rm = TRUE),
+            mismatches = sum(!ok, na.rm = TRUE), .by = column)
+```
+
+All `r n_recomputed` printed values (`r sum(recheck$values, na.rm = TRUE)` in the body and *P* value column, and the `r length(header_n_docx)` group sizes) agree with the participant-level data.
+
+## Summary
+
+Table 2 merges Table S1 and Table S2 without APOE into one Word table of `r nrow(merged)` rows (`r length(i_section)` section rows) and `r n_col` columns: Characteristic, Overall, the six groups and the *P* value.
+
+- No variable appears in both sources, so nothing was dropped as a duplicate.
+- Age is reported as mean (SD) (`r cells$s1$stat_0[cells$s1$variable == "age"]` years overall), as in Table S1.
+- No Missing rows are printed (decision 45); each summary uses the participants with data. The `r nrow(missing_s2)` variables with missing values are: `r missing_s2 |> transmute(t = glue("{table_layout$display[match(variable, table_layout$variable)]} {format(stat_0, big.mark = ',')}")) |> pull(t) |> str_flatten_comma()` overall.
+- The preview has no ISO-Strict markup, `w:jc` values `r str_flatten_comma(sort(unique(jc_vals)))`, one header/body size (10 pt) and one footer size (8 pt), all in Times New Roman, and a fixed-layout grid of `r length(grid_tw)` columns, `r sprintf("%.2f", sum(grid_tw, na.rm = TRUE) / tw_per_in)` inches wide.
+- Every printed cell equals its source object's cell, and all `r n_recomputed` printed values agree with a recomputation from the participant-level data.
+- Its natural width is `r sprintf("%.2f", table_width_in)` inches, more than a portrait page (6.5 inches) or the landscape budget (`r sprintf("%.2f", table_budget_in)` inches) allows. It needs a landscape page, where `r length(wrapped_labels)` variable labels wrap to two lines.

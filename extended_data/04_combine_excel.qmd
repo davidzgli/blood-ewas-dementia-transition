@@ -62,6 +62,54 @@ for (file in input_files) {
   }
 }
 
+# Contents sheet.
+#
+# Alzheimer's & Dementia requires that "the legends/captions for each item must be
+# within the same file as the item". Each sheet already opens with its own legend
+# row, so this adds the index that ties those to the Data S numbers the manuscript
+# cites, as the first sheet of the workbook.
+#
+# The entries are DERIVED from the legend row of each cloned sheet, never restated:
+# a hand-kept list here would silently drift from the sheets the moment one is
+# renumbered, and a wrong number in a supplementary index is invisible to every
+# check that reads the manuscript source.
+contents <-
+  wb_get_sheet_names(combined_wb) |>
+  purrr::map_chr(\(s) {
+    legend <- wb_to_df(combined_wb, sheet = s, rows = 1, col_names = FALSE) |>
+      unlist() |>
+      as.character() |>
+      purrr::detect(\(x) !is.na(x) & nzchar(x))
+    legend %||% NA_character_
+  }) |>
+  tibble::enframe(name = NULL, value = "legend") |>
+  mutate(
+    sheet = wb_get_sheet_names(combined_wb),
+    item  = str_extract(legend, "^Data S\\d+"),
+    # Not "the first sentence": several legends contain a period inside a value
+    # ("P value < 1.0 x 10-8") and the GO ones continue into a bulleted column
+    # glossary, so a sentence split truncates mid-number. Take a fixed span and
+    # cut it on a word boundary instead.
+    title = legend |>
+      str_remove("^Data S\\d+\\.\\s*") |>
+      str_squish() |>
+      str_trunc(280, ellipsis = "...")
+  ) |>
+  select(Item = item, Sheet = sheet, Description = title)
+
+stopifnot(
+  "every sheet must open with a `Data SN.` legend" = !any(is.na(contents$Item)),
+  "Data S items must be numbered 1..n in sheet order" =
+    identical(contents$Item, paste0("Data S", seq_len(nrow(contents))))
+)
+
+combined_wb <- combined_wb |>
+  wb_add_worksheet("Contents") |>
+  wb_add_data("Contents", contents) |>
+  wb_set_col_widths("Contents", cols = 1:3, widths = c(12, 20, 110)) |>
+  wb_set_order(c(length(wb_get_sheet_names(combined_wb)) + 1,
+                 seq_along(wb_get_sheet_names(combined_wb))))
+
 # Save the combined workbook
 fs::dir_create(here("extended_data/output"))
 output_file <- here("extended_data/output/suppl_data_all.xlsx")

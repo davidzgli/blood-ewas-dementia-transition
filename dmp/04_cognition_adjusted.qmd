@@ -1,0 +1,552 @@
+---
+title: "Cognition-Adjusted DMP Refit"
+subtitle: "Reviewer point R1.1: baseline cognition in the baseline-normal groups"
+---
+
+## Overview
+
+Reviewer 1 (point R1.1) noted that the three groups who were cognitively normal at baseline — stable_normal, normal2mci and normal2incid — already differed in cognitive performance (submitted Table S2). This notebook (1) quantifies those baseline differences after adjustment for age and sex, and (2) refits the 403 DMPs with and without the three cognitive composite scores, to show how much of each dementia-group effect remains after conditioning on baseline cognition.
+
+**This adjustment is conservative.** Cognition is not an independent confounder here: the clinical groups were *defined* from cognitive assessment (the AGES-Reykjavik dementia and MCI ascertainment starts from a cognitive screen that includes the Digit Symbol Substitution Test, one of the components of the speed composite), so the composites lie on the path from disease to group label. Conditioning on them can remove real disease-related methylation signal along with any confounding, and the cognition-adjusted effects should be read as a lower bound, not as the "true" effect.
+
+```{r}
+#| label: load-packages
+
+# tidyverse, here, janitor and glue are pre-loaded by .Rprofile
+pacman::p_load(haven, rhdf5, broom, install = FALSE)
+
+source(here("custom_func/select_sig_cg.R"))
+```
+
+## Load data
+
+The EWAS analytic sample, its covariates, the three cognitive composite scores and the covariate-adjusted methylation residuals of the 403 DMPs.
+
+### Analytic sample
+
+The EWAS sample of 2,491 participants (2,496 minus 5 with missing smoking status), with the blood cell proportions used in the EWAS model.
+
+```{r}
+#| label: load-covariates
+
+covariates <-
+  read_rds(here("data/collaborator_only/covariates_and_meth_DMP_on_chr21.rds")) |>
+  select(subr_id18, a1age, sex, a1smokingstatus, dementia_ages1_eos) |>
+  dplyr::filter(!is.na(a1smokingstatus)) |>
+  mutate(subr_id18 = as.character(subr_id18))
+
+blood_cells <-
+  read_csv(here("data/collaborator_only/blood_cell_composition.csv"), show_col_types = FALSE) |>
+  dplyr::filter(cohort == "I") |>
+  select(subr_id18, Bcell, CD4T, CD8T, Eos, Mono, Neu) |>
+  mutate(subr_id18 = as.character(subr_id18))
+
+stopifnot(nrow(covariates) == 2491, !anyDuplicated(blood_cells$subr_id18))
+
+levels(covariates$dementia_ages1_eos)
+```
+
+### Cognitive composites
+
+The three composites shown in submitted Table S2, read from the AGES-I derived-variable file. The `*2` columns are the versions that do not require complete data across every component test.
+
+```{r}
+#| label: load-cognition
+
+cog_vars <- c(cog_memory = "A1MEMORY2", cog_speed = "A1SPEED2", cog_working = "A1WORKING2")
+
+cognition_raw <-
+  read_sas(
+    here("data/private/ages1_derived_variables_nov2021.sas7bdat"),
+    col_select = c(SUBR_ID18, all_of(unname(cog_vars)))
+  )
+
+# SAS labels, to confirm the column choice
+map_chr(cognition_raw[unname(cog_vars)], \(x) attr(x, "label"))
+
+cognition <-
+  cognition_raw |>
+  transmute(subr_id18 = as.character(SUBR_ID18), !!!syms(cog_vars)) |>
+  mutate(across(starts_with("cog_"), as.numeric))
+
+stopifnot(!anyDuplicated(cognition$subr_id18))
+```
+
+Group means reproduce submitted Table S2 to two decimals for the three baseline-normal groups.
+
+```{r}
+#| label: check-table-s2
+
+table_s2_means <- tribble(
+  ~dementia_ages1_eos, ~cog_memory, ~cog_speed, ~cog_working,
+  "stable_normal",      0.41,        0.37,       0.27,
+  "normal2mci",        -0.35,       -0.30,      -0.33,
+  "normal2incid",      -0.25,       -0.04,      -0.12
+)
+
+analytic <-
+  covariates |>
+  left_join(blood_cells, by = "subr_id18") |>
+  left_join(cognition, by = "subr_id18")
+
+group_means <-
+  analytic |>
+  summarise(
+    across(starts_with("cog_"), \(x) round(mean(x, na.rm = TRUE), 2)),
+    .by = dementia_ages1_eos
+  ) |>
+  mutate(dementia_ages1_eos = as.character(dementia_ages1_eos))
+
+reproduced <- inner_join(table_s2_means, group_means, by = "dementia_ages1_eos", suffix = c("_s2", "_here"))
+
+stopifnot(
+  all(reproduced$cog_memory_s2 == reproduced$cog_memory_here),
+  all(reproduced$cog_speed_s2 == reproduced$cog_speed_here),
+  all(reproduced$cog_working_s2 == reproduced$cog_working_here)
+)
+
+knitr::kable(reproduced)
+```
+
+The composites are means of z-scores, so their SD in the cohort is below 1. They are standardised to the analytic sample (n = 2,491) so that group differences read in SD units.
+
+```{r}
+#| label: standardise-cognition
+
+cog_sd <- analytic |> summarise(across(starts_with("cog_"), \(x) sd(x, na.rm = TRUE)))
+
+analytic <-
+  analytic |>
+  mutate(across(starts_with("cog_"), \(x) (x - mean(x, na.rm = TRUE)) / sd(x, na.rm = TRUE), .names = "z_{.col}"))
+
+knitr::kable(cog_sd, digits = 3, caption = "SD of each composite in the analytic sample (raw units)")
+
+analytic |>
+  summarise(
+    n = n(),
+    across(starts_with("cog_"), \(x) sum(is.na(x)), .names = "missing_{.col}"),
+    .by = dementia_ages1_eos
+  ) |>
+  knitr::kable(format.args = list(big.mark = ","))
+```
+
+### DMP residuals
+
+The covariate-adjusted M-value residuals (no dementia term) for the 403 DMPs, read from the whole-genome HDF5 file and aligned to the analytic sample by subject ID.
+
+```{r}
+#| label: load-dmp-residuals
+
+h5_path <- here("data/collaborator_only/adjusted_meth_whole_genome.h5")
+
+# Dataset dimensions, with thousands separators
+h5ls(h5_path) |>
+  mutate(dim = str_replace_all(dim, "[0-9]+", \(x) formatC(as.numeric(x), format = "d", big.mark = ","))) |>
+  knitr::kable()
+
+base_wide <- read_rds(here("data/upon_request/whole_genome_wide.rds"))
+dmp_base <- select_sig_cg(base_wide, 8) |> select(-n_sig)
+stopifnot(nrow(dmp_base) == 403)
+
+# h5read returns 1-d arrays; drop the dim attribute
+h5_cpgs <- as.vector(h5read(h5_path, "cpg_names"))
+h5_ids <- as.vector(h5read(h5_path, "subr_id18"))
+dmp_index <- sort(match(dmp_base$cg, h5_cpgs))
+stopifnot(!anyNA(dmp_index))
+
+resid_dmp <- h5read(h5_path, "matrix", index = list(NULL, dmp_index))
+h5closeAll()
+dimnames(resid_dmp) <- list(h5_ids, h5_cpgs[dmp_index])
+
+# Align the analytic sample to the HDF5 row order
+analytic <- analytic[match(h5_ids, analytic$subr_id18), ]
+stopifnot(identical(analytic$subr_id18, rownames(resid_dmp)))
+
+prettyNum(c(participants = nrow(resid_dmp), dmps = ncol(resid_dmp)), big.mark = ",")
+```
+
+## Baseline cognition in the baseline-normal groups
+
+Age- and sex-adjusted differences in each composite (in analytic-sample SD units) among the three groups who were cognitively normal at baseline, with a Wilcoxon rank-sum test on the raw scores alongside.
+
+```{r}
+#| label: baseline-cognition
+
+baseline_normal <-
+  analytic |>
+  dplyr::filter(dementia_ages1_eos %in% c("stable_normal", "normal2mci", "normal2incid")) |>
+  mutate(group = fct_drop(dementia_ages1_eos))
+
+# Comparisons as (group, reference)
+comparisons <- tribble(
+  ~group,         ~reference,
+  "normal2mci",   "stable_normal",
+  "normal2incid", "stable_normal",
+  "normal2mci",   "normal2incid"
+)
+
+compare_cognition <- function(cog, grp, ref) {
+  # Adjusted model on all three baseline-normal groups, reference releveled
+  fit <- lm(
+    reformulate(c("group", "a1age", "sex"), response = paste0("z_", cog)),
+    data = mutate(baseline_normal, group = fct_relevel(group, ref))
+  )
+  coef_row <- tidy(fit, conf.int = TRUE) |> dplyr::filter(term == paste0("group", grp))
+
+  # Unadjusted two-group comparison on the raw scores
+  pair <-
+    baseline_normal |>
+    dplyr::filter(group %in% c(grp, ref), !is.na(.data[[cog]])) |>
+    mutate(group = fct_drop(group))
+  wilcox_p <- wilcox.test(reformulate("group", response = cog), data = pair, exact = FALSE)$p.value
+  pair_means <- pair |> summarise(mean = mean(.data[[cog]], na.rm = TRUE), n = n(), .by = group)
+
+  tibble(
+    n_group = pair_means$n[pair_means$group == grp],
+    n_reference = pair_means$n[pair_means$group == ref],
+    raw_mean_diff = pair_means$mean[pair_means$group == grp] - pair_means$mean[pair_means$group == ref],
+    adj_diff_sd = coef_row$estimate,
+    conf_low = coef_row$conf.low,
+    conf_high = coef_row$conf.high,
+    p_lm = coef_row$p.value,
+    p_wilcox = wilcox_p
+  )
+}
+
+baseline_cognition <-
+  expand_grid(cog = names(cog_vars), comparisons) |>
+  mutate(result = pmap(list(cog, group, reference), compare_cognition)) |>
+  unnest(result) |>
+  mutate(composite = cog_vars[cog], .after = cog)
+
+# P values to two significant digits, scientific notation below 0.001 (reused in the Summary)
+fmt_p <- function(p) if_else(p >= 0.001, formatC(p, format = "fg", digits = 2), formatC(p, format = "e", digits = 1))
+
+baseline_cognition |>
+  mutate(across(starts_with("p_"), fmt_p)) |>
+  knitr::kable(digits = 3, format.args = list(big.mark = ","))
+```
+
+The adjusted model is fitted on all three baseline-normal groups at once (shared age and sex slopes), with the reference releveled for each comparison; the Wilcoxon test uses only the two groups being compared and is not adjusted.
+
+### Overlap of the score distributions
+
+The mean differences above are group-level. How far apart the groups are as individuals is shown by the share of each later-transition group scoring at or above the stable normal median (50% if the distributions coincided) and the share within the stable normal group's 5th–95th percentile range (raw scores, participants with a score). Added 2026-10-07 for the Discussion's statement that the scores overlapped widely.
+
+```{r}
+#| label: score-overlap
+
+score_overlap <-
+  names(cog_vars) |>
+  map(\(cog) {
+    ref <- baseline_normal |> dplyr::filter(group == "stable_normal") |> pull(all_of(cog))
+    ref_q <- quantile(ref, c(0.05, 0.5, 0.95), na.rm = TRUE)
+    baseline_normal |>
+      dplyr::filter(group != "stable_normal", !is.na(.data[[cog]])) |>
+      summarise(
+        n = n(),
+        share_at_or_above_ref_median = mean(.data[[cog]] >= ref_q[["50%"]], na.rm = TRUE),
+        share_within_ref_5_95 = mean(between(.data[[cog]], ref_q[["5%"]], ref_q[["95%"]]), na.rm = TRUE),
+        .by = group
+      ) |>
+      mutate(cog = .env$cog, composite = cog_vars[[.env$cog]], .before = 1)
+  }) |>
+  list_rbind() |>
+  mutate(group = as.character(group))
+
+score_overlap |>
+  knitr::kable(digits = 3)
+```
+
+## DMP refit with and without cognition
+
+The 403 DMPs are refitted in three settings, using the HDF5 residuals with the covariates re-included (Frisch–Waugh–Lovell), which gives exactly the dementia-group coefficients of the full EWAS model on any subset.
+
+### Model helper
+
+One multivariate `lm()` per setting, with the 403 residual vectors as the response matrix; returns the five dementia-group contrasts versus stable_normal.
+
+```{r}
+#| label: fit-helper
+
+ewas_terms <- c("dementia_ages1_eos", "a1age", "sex", "a1smokingstatus", "Bcell", "CD4T", "CD8T", "Eos", "Mono", "Neu")
+contrast_order <- c("normal2mci", "stable_mci", "normal2incid", "mci2incid", "prev")
+
+fit_dmp <- function(keep, extra_terms = NULL) {
+  # The response matrix is found in this function's environment (the formula's)
+  y <- resid_dmp[keep, ]
+  fit <- lm(reformulate(c(ewas_terms, extra_terms), response = "y"), data = analytic[keep, ])
+  tidy(fit) |>
+    dplyr::filter(str_starts(term, "dementia_ages1_eos")) |>
+    transmute(
+      cg = response,
+      contrast = str_remove(term, "dementia_ages1_eos"),
+      estimate,
+      std_error = std.error,
+      nlog10_p = -(log(2) + pt(-abs(statistic), fit$df.residual, log.p = TRUE)) / log(10),
+      n = nobs(fit)
+    )
+}
+```
+
+### Setting a: full sample, verified against the saved EWAS
+
+The full-sample refit must reproduce the saved genome-wide estimates and P values for all 403 × 5 cells before any new model is trusted.
+
+```{r}
+#| label: setting-a
+
+keep_all <- rep(TRUE, nrow(analytic))
+fit_a <- fit_dmp(keep_all)
+
+base_long <-
+  dmp_base |>
+  pivot_longer(-cg, names_to = c(".value", "contrast"), names_pattern = "(estimate|nlog10_p_value)_(.*)")
+
+verify_a <-
+  fit_a |>
+  inner_join(base_long, by = c("cg", "contrast")) |>
+  summarise(
+    n_cells = n(),
+    max_abs_diff_estimate = max(abs(estimate.x - estimate.y), na.rm = TRUE),
+    max_abs_diff_nlog10_p = max(abs(nlog10_p - nlog10_p_value), na.rm = TRUE)
+  )
+
+stopifnot(
+  verify_a$n_cells == 403 * 5,
+  verify_a$max_abs_diff_estimate < 1e-10,
+  verify_a$max_abs_diff_nlog10_p < 1e-8
+)
+
+verify_a |>
+  mutate(across(starts_with("max_"), \(x) formatC(x, format = "e", digits = 1))) |>
+  knitr::kable(format.args = list(big.mark = ","))
+```
+
+### Settings b and c: cognition complete cases
+
+Setting b restricts to participants with all three composites (same model); setting c adds the three standardised composites to that model, so the b → c change isolates the effect of adjusting for cognition.
+
+```{r}
+#| label: settings-b-c
+
+keep_cc <- analytic |> select(starts_with("cog_")) |> complete.cases()
+
+fit_b <- fit_dmp(keep_cc)
+fit_c <- fit_dmp(keep_cc, extra_terms = c("z_cog_memory", "z_cog_speed", "z_cog_working"))
+
+analytic[keep_cc, ] |>
+  count(dementia_ages1_eos, name = "n_complete_cases") |>
+  knitr::kable(format.args = list(big.mark = ","))
+```
+
+### Effect-size summary per contrast
+
+Per contrast, over all 403 DMPs and over that contrast's own DMPs (base *P* < 1.0 × 10⁻⁸ in that contrast): median ratio and slope through the origin of the c estimates on the b estimates, sign concordance b vs c, the median standard-error ratios b/a and c/b, and the number of CpGs at *P* < 1.0 × 10⁻⁸ and *P* < 1.0 × 10⁻⁵ in each setting. The b-on-a slope is shown too, to separate the effect of the complete-case restriction from the effect of the adjustment.
+
+```{r}
+#| label: effect-summary
+
+dmp_estimates <-
+  bind_rows(a = fit_a, b = fit_b, c = fit_c, .id = "setting") |>
+  mutate(contrast = factor(contrast, levels = contrast_order))
+
+own_dmps <-
+  base_long |>
+  dplyr::filter(nlog10_p_value >= 8) |>
+  select(cg, own_contrast = contrast)
+
+estimates_wide <-
+  dmp_estimates |>
+  select(setting, cg, contrast, estimate, std_error, nlog10_p) |>
+  pivot_wider(names_from = setting, values_from = c(estimate, std_error, nlog10_p)) |>
+  left_join(own_dmps, by = "cg")
+
+summarise_effects <- function(dat) {
+  dat |>
+    summarise(
+      n_cpg = n(),
+      median_ratio_c_b = median(estimate_c / estimate_b, na.rm = TRUE),
+      slope_c_b = sum(estimate_b * estimate_c, na.rm = TRUE) / sum(estimate_b^2, na.rm = TRUE),
+      slope_b_a = sum(estimate_a * estimate_b, na.rm = TRUE) / sum(estimate_a^2, na.rm = TRUE),
+      sign_concordance_c_b = mean(sign(estimate_c) == sign(estimate_b), na.rm = TRUE),
+      median_se_ratio_b_a = median(std_error_b / std_error_a, na.rm = TRUE),
+      median_se_ratio_c_b = median(std_error_c / std_error_b, na.rm = TRUE),
+      n_p8_a = sum(nlog10_p_a >= 8, na.rm = TRUE),
+      n_p8_b = sum(nlog10_p_b >= 8, na.rm = TRUE),
+      n_p8_c = sum(nlog10_p_c >= 8, na.rm = TRUE),
+      n_p5_a = sum(nlog10_p_a >= 5, na.rm = TRUE),
+      n_p5_b = sum(nlog10_p_b >= 5, na.rm = TRUE),
+      n_p5_c = sum(nlog10_p_c >= 5, na.rm = TRUE),
+      .by = contrast
+    )
+}
+
+effect_summary <-
+  bind_rows(
+    all_403 = summarise_effects(estimates_wide),
+    own_dmps = estimates_wide |> dplyr::filter(own_contrast == contrast) |> summarise_effects(),
+    .id = "dmp_set"
+  ) |>
+  arrange(dmp_set, contrast)
+
+knitr::kable(effect_summary, digits = 3)
+```
+
+Over all 403 DMPs, a contrast's effects at another contrast's DMPs are often near zero, so per-CpG ratios there are unstable; the slope through the origin is the more reliable summary of attenuation. Together with the slopes, the two standard-error ratios separate the two ways a count can fall: loss of precision (fewer participants in b; collinearity between cognition and group membership in c) versus a smaller effect.
+
+### Spearman correlations with prevalent dementia
+
+The headline correlations of the manuscript (Figure 1A): Spearman correlation between the prevalent-dementia effects and each transition's effects, in each setting, over all 403 DMPs and over the Figure 1A set. That set excludes mci2incid effects below -0.4 and normal2mci effects below -0.3 (exclusions taken from the base estimates, so each CpG set is the same in every setting), and in setting a it reproduces the published values (0.87, 0.86, -0.48).
+
+```{r}
+#| label: spearman
+
+prev_pairs <-
+  estimates_wide |>
+  select(cg, contrast, starts_with("estimate_")) |>
+  pivot_longer(starts_with("estimate_"), names_to = "setting", names_prefix = "estimate_", values_to = "estimate") |>
+  pivot_wider(names_from = contrast, values_from = estimate) |>
+  pivot_longer(c(normal2incid, mci2incid, normal2mci), names_to = "contrast", values_to = "estimate")
+
+# Points Figure 1A drops (normal2mci_focused/01_DMP_scatter.qmd), from the base fit
+figure_1a_excluded <-
+  fit_a |>
+  dplyr::filter((contrast == "mci2incid" & estimate < -0.4) | (contrast == "normal2mci" & estimate < -0.3)) |>
+  select(cg, contrast)
+
+spearman_prev <-
+  bind_rows(
+    all_403 = prev_pairs,
+    figure_1a_set = anti_join(prev_pairs, figure_1a_excluded, by = c("cg", "contrast")),
+    .id = "cpg_set"
+  ) |>
+  summarise(
+    n_cpg = n(),
+    rho = cor(prev, estimate, method = "spearman"),
+    p_value = cor.test(prev, estimate, method = "spearman", exact = FALSE)$p.value,
+    .by = c(cpg_set, contrast, setting)
+  ) |>
+  mutate(contrast = factor(contrast, levels = c("normal2incid", "mci2incid", "normal2mci"))) |>
+  arrange(cpg_set, contrast, setting)
+
+# Setting a on the Figure 1A set must reproduce the published values
+published_rho <- c(normal2incid = 0.87, mci2incid = 0.86, normal2mci = -0.48)
+rho_a <- spearman_prev |> dplyr::filter(cpg_set == "figure_1a_set", setting == "a")
+stopifnot(all(abs(rho_a$rho - published_rho[as.character(rho_a$contrast)]) < 0.005))
+
+spearman_prev |>
+  mutate(p_value = formatC(p_value, format = "e", digits = 1)) |>
+  knitr::kable(digits = 3)
+```
+
+## Save outputs
+
+The summary tables and the per-CpG estimates of all three settings, as new objects under `dmp/output/`.
+
+```{r}
+#| label: save-outputs
+
+fs::dir_create(here("dmp/output"))
+
+write_rds(baseline_cognition, here("dmp/output/cognition_adjusted_baseline_cognition.rds"))
+write_rds(score_overlap, here("dmp/output/cognition_adjusted_score_overlap.rds"))
+write_rds(dmp_estimates, here("dmp/output/cognition_adjusted_dmp_estimates.rds"))
+write_rds(effect_summary, here("dmp/output/cognition_adjusted_effect_summary.rds"))
+write_rds(spearman_prev, here("dmp/output/cognition_adjusted_spearman_prev.rds"))
+```
+
+## Summary
+
+Findings in one place, for the response to R1.1. Every number below is computed inline from the objects above, and every claim the bullets make about those numbers is guarded by `stopifnot()`.
+
+```{r}
+#| label: summary-values
+
+get_cog <- function(cog_name, grp, ref, col) {
+  baseline_cognition |>
+    dplyr::filter(cog == .env$cog_name, group == .env$grp, reference == .env$ref) |>
+    pull({{ col }})
+}
+get_eff <- function(set, ctr, col) {
+  effect_summary |>
+    dplyr::filter(dmp_set == .env$set, contrast == .env$ctr) |>
+    pull({{ col }})
+}
+get_rho <- function(ctr, set, cpgs = "all_403") {
+  spearman_prev |>
+    dplyr::filter(cpg_set == .env$cpgs, contrast == .env$ctr, setting == .env$set) |>
+    pull(rho)
+}
+fmt <- function(x, digits = 2) formatC(x, format = "f", digits = digits)
+pct <- function(x) formatC(100 * x, format = "f", digits = 0)
+# "a–b" from a vector, collapsed to one value when both ends round alike
+fmt_range <- function(x, f = fmt) {
+  ends <- f(range(x, na.rm = TRUE))
+  if (ends[1] == ends[2]) ends[1] else paste0(ends[1], "–", ends[2])
+}
+
+# Median standard-error ratio, setting c over setting b, per contrast (all 403 DMPs)
+se_ratio_c_b <-
+  effect_summary |>
+  dplyr::filter(dmp_set == "all_403") |>
+  select(contrast, median_se_ratio_c_b) |>
+  deframe()
+other_contrasts <- c("normal2mci", "stable_mci", "normal2incid")
+
+# Largest gap between the all-403 and the own-DMP medians of that ratio
+se_ratio_gap <-
+  effect_summary |>
+  select(dmp_set, contrast, median_se_ratio_c_b) |>
+  pivot_wider(names_from = dmp_set, values_from = median_se_ratio_c_b) |>
+  summarise(max_gap = max(abs(all_403 - own_dmps), na.rm = TRUE)) |>
+  pull(max_gap)
+
+p_vs_stable_normal <- baseline_cognition |> dplyr::filter(reference == "stable_normal") |> pull(p_lm)
+
+# Prev on its own DMPs: effect shift (|1 - slope|) and median SE inflation (ratio - 1) per step
+prev_shift_b_a <- abs(1 - get_eff("own_dmps", "prev", slope_b_a))
+prev_se_gain_b_a <- get_eff("own_dmps", "prev", median_se_ratio_b_a) - 1
+prev_shrink_c_b <- 1 - get_eff("own_dmps", "prev", slope_c_b)
+prev_se_gain_c_b <- get_eff("own_dmps", "prev", median_se_ratio_c_b) - 1
+stable_mci_slope_c_b <- effect_summary$slope_c_b[effect_summary$contrast == "stable_mci"]
+
+# Guards for the claims in the bullets below; an NA must fail, not be dropped
+stopifnot(
+  !anyNA(se_ratio_c_b),
+  length(p_vs_stable_normal) == 6,
+  !anyNA(p_vs_stable_normal),
+  !anyNA(c(prev_shift_b_a, prev_se_gain_b_a, prev_shrink_c_b, prev_se_gain_c_b, stable_mci_slope_c_b)),
+  se_ratio_c_b[["prev"]] == max(se_ratio_c_b, na.rm = TRUE),
+  se_ratio_c_b[["mci2incid"]] > max(se_ratio_c_b[other_contrasts], na.rm = TRUE),
+  all(effect_summary$sign_concordance_c_b[effect_summary$dmp_set == "own_dmps"] == 1),
+  # "from 1 own DMP" (singular)
+  get_eff("own_dmps", "normal2incid", n_cpg) == 1,
+  # prev, a -> b: the fall is mostly lost precision (SE gain well above the effect shift)
+  prev_shift_b_a < prev_se_gain_b_a / 2,
+  # prev, b -> c: effects shrink and SEs inflate, by about the same fraction
+  prev_shrink_c_b > 0,
+  prev_se_gain_c_b > 0,
+  abs(prev_shrink_c_b - prev_se_gain_c_b) < 0.05,
+  get_cog("cog_speed", "normal2mci", "normal2incid", adj_diff_sd) < 0,
+  get_cog("cog_working", "normal2mci", "normal2incid", adj_diff_sd) < 0,
+  get_cog("cog_speed", "normal2mci", "normal2incid", p_lm) < 0.05,
+  get_cog("cog_working", "normal2mci", "normal2incid", p_lm) < 0.05,
+  all(spearman_prev$rho[spearman_prev$contrast == "normal2mci"] < 0),
+  # stable_mci: the complete-case restriction, not the adjustment, moves the effects,
+  # and the adjustment "barely" does (b -> c slope within 5% of 1 over both sets)
+  all(abs(effect_summary$slope_b_a[effect_summary$contrast == "stable_mci"] - 1) >
+        abs(stable_mci_slope_c_b - 1)),
+  all(abs(stable_mci_slope_c_b - 1) < 0.05)
+)
+```
+
+- **Baseline cognition.** After adjustment for age and sex, normal2incid scored `r fmt(get_cog("cog_memory", "normal2incid", "stable_normal", adj_diff_sd))`, `r fmt(get_cog("cog_speed", "normal2incid", "stable_normal", adj_diff_sd))` and `r fmt(get_cog("cog_working", "normal2incid", "stable_normal", adj_diff_sd))` SD and normal2mci `r fmt(get_cog("cog_memory", "normal2mci", "stable_normal", adj_diff_sd))`, `r fmt(get_cog("cog_speed", "normal2mci", "stable_normal", adj_diff_sd))` and `r fmt(get_cog("cog_working", "normal2mci", "stable_normal", adj_diff_sd))` SD relative to stable_normal on memory, processing speed and working memory (all six *P* < `r fmt_p(10^ceiling(log10(max(p_vs_stable_normal, na.rm = TRUE))))`). normal2mci versus normal2incid differed by `r fmt(get_cog("cog_memory", "normal2mci", "normal2incid", adj_diff_sd))` (memory, *P* = `r fmt_p(get_cog("cog_memory", "normal2mci", "normal2incid", p_lm))`), `r fmt(get_cog("cog_speed", "normal2mci", "normal2incid", adj_diff_sd))` (speed, *P* = `r fmt_p(get_cog("cog_speed", "normal2mci", "normal2incid", p_lm))`) and `r fmt(get_cog("cog_working", "normal2mci", "normal2incid", adj_diff_sd))` SD (working memory, *P* = `r fmt_p(get_cog("cog_working", "normal2mci", "normal2incid", p_lm))`).
+- **Sample restriction.** `r format(sum(keep_cc, na.rm = TRUE), big.mark = ",")` of `r format(nrow(analytic), big.mark = ",")` participants had all three composites.
+- **Adjustment for cognition (b → c), own DMPs.** Slope through the origin: normal2mci `r fmt(get_eff("own_dmps", "normal2mci", slope_c_b))`, stable_mci `r fmt(get_eff("own_dmps", "stable_mci", slope_c_b))`, normal2incid `r fmt(get_eff("own_dmps", "normal2incid", slope_c_b))` (from `r get_eff("own_dmps", "normal2incid", n_cpg)` own DMP), mci2incid `r fmt(get_eff("own_dmps", "mci2incid", slope_c_b))`, prev `r fmt(get_eff("own_dmps", "prev", slope_c_b))`; sign concordance `r fmt_range(effect_summary$sign_concordance_c_b[effect_summary$dmp_set == "own_dmps"], pct)`% in every group.
+- **Adjustment for cognition (b → c), all 403 DMPs.** Slope through the origin: normal2mci `r fmt(get_eff("all_403", "normal2mci", slope_c_b))`, stable_mci `r fmt(get_eff("all_403", "stable_mci", slope_c_b))`, normal2incid `r fmt(get_eff("all_403", "normal2incid", slope_c_b))`, mci2incid `r fmt(get_eff("all_403", "mci2incid", slope_c_b))`, prev `r fmt(get_eff("all_403", "prev", slope_c_b))`; sign concordance `r fmt_range(effect_summary$sign_concordance_c_b[effect_summary$dmp_set == "all_403"], pct)`%.
+- **Significance counts, prev.** Prev DMPs at *P* < 1.0 × 10⁻⁸: `r get_eff("own_dmps", "prev", n_p8_a)` (full sample), `r get_eff("own_dmps", "prev", n_p8_b)` (complete cases), `r get_eff("own_dmps", "prev", n_p8_c)` (adjusted); at *P* < 1.0 × 10⁻⁵: `r get_eff("own_dmps", "prev", n_p5_a)`, `r get_eff("own_dmps", "prev", n_p5_b)`, `r get_eff("own_dmps", "prev", n_p5_c)`. The median standard error rose `r fmt(get_eff("own_dmps", "prev", median_se_ratio_b_a))`-fold with the complete-case restriction and a further `r fmt(get_eff("own_dmps", "prev", median_se_ratio_c_b))`-fold with the adjustment, while the effects changed by a slope of `r fmt(get_eff("own_dmps", "prev", slope_b_a))` and `r fmt(get_eff("own_dmps", "prev", slope_c_b))`. The fall from a to b is almost all lost precision (`r sum(keep_cc & analytic$dementia_ages1_eos == "prev", na.rm = TRUE)` of `r sum(analytic$dementia_ages1_eos == "prev", na.rm = TRUE)` prev participants have all three composites); the b → c step shrinks the prev effects and inflates their standard errors in about equal measure.
+- **Standard errors, b → c.** Adding the three cognitive composites to the complete-case model inflated the median standard error by about ×`r fmt(se_ratio_c_b[["prev"]])` for prev, ×`r fmt(se_ratio_c_b[["mci2incid"]])` for mci2incid and ×`r fmt_range(se_ratio_c_b[other_contrasts])` for normal2mci, stable_mci and normal2incid (medians over all 403 DMPs; the own-DMP medians differ from these by at most `r fmt(se_ratio_gap, 3)`). The inflation is largest for prev, as expected when the covariate (cognition) largely defines the group (prevalent dementia).
+- **Correlation pattern, all 403 DMPs.** Spearman ρ of prev with normal2incid, mci2incid and normal2mci: `r fmt(get_rho("normal2incid", "a"))`, `r fmt(get_rho("mci2incid", "a"))`, `r fmt(get_rho("normal2mci", "a"))` in the full sample; `r fmt(get_rho("normal2incid", "b"))`, `r fmt(get_rho("mci2incid", "b"))`, `r fmt(get_rho("normal2mci", "b"))` in complete cases; `r fmt(get_rho("normal2incid", "c"))`, `r fmt(get_rho("mci2incid", "c"))`, `r fmt(get_rho("normal2mci", "c"))` after adjustment for cognition. The normal2mci correlation stays negative in every setting, although normal2mci scored lower than normal2incid on speed and working memory at baseline.
+- **Correlation pattern, Figure 1A set.** The same three correlations: `r fmt(get_rho("normal2incid", "a", "figure_1a_set"))`, `r fmt(get_rho("mci2incid", "a", "figure_1a_set"))`, `r fmt(get_rho("normal2mci", "a", "figure_1a_set"))` (published); `r fmt(get_rho("normal2incid", "c", "figure_1a_set"))`, `r fmt(get_rho("mci2incid", "c", "figure_1a_set"))`, `r fmt(get_rho("normal2mci", "c", "figure_1a_set"))` after adjustment for cognition.
+- **Caveats.** Cognition entered the clinical classification, so these adjusted estimates are conservative and may remove real disease-related signal. The complete-case restriction on its own moved the stable_mci effects (b-on-a slope `r fmt(get_eff("own_dmps", "stable_mci", slope_b_a))` over its own DMPs, `r fmt(get_eff("all_403", "stable_mci", slope_b_a))` over all 403; `r sum(keep_cc & analytic$dementia_ages1_eos == "stable_mci", na.rm = TRUE)` of `r sum(analytic$dementia_ages1_eos == "stable_mci", na.rm = TRUE)` stable_mci participants are complete cases), while the adjustment barely did (b → c slope `r fmt_range(effect_summary$slope_c_b[effect_summary$contrast == "stable_mci"])` over both sets).

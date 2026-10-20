@@ -2,7 +2,8 @@
 <!-- Included by ms/write-ms/dementia_EWAS.qmd so @fig-*, @suppfig-*, @tbl-*, @supptbl-*, @suppdata-* refs resolve -->
 <!-- These generate numbered figure labels without real content. -->
 <!-- Block ORDER here drives float numbering in the assembled manuscript; keep it in sync with -->
-<!-- main_figures.qmd / supplementary_figures.qmd / tables.qmd (suppdata has no standalone file). -->
+<!-- main_figures.qmd / supplementary_figures.qmd / supplementary_tables.qmd / main_tables.qmd -->
+<!-- (suppdata has no standalone file). Verified by manage_project/check_float_callouts.py. -->
 
 <!-- Main figures -->
 
@@ -19,6 +20,11 @@
 ![](/ms/fig_tbl/placeholder.png){#fig-pathway-analysis}
 
 <!-- Supplementary figures -->
+
+<!-- suppfig-timeline: new Figure S1 (reviewer R1.3), added 2026-10-07; first in the block, so
+     submitted Figures S1-S24 are now S2-S25. -->
+
+![](/ms/fig_tbl/placeholder.png){#suppfig-timeline}
 
 ![](/ms/fig_tbl/placeholder.png){#suppfig-manhattan}
 
@@ -72,9 +78,11 @@
 
 ![](/ms/fig_tbl/placeholder.png){#tbl-dementia-category}
 
-![](/ms/fig_tbl/placeholder.png){#supptbl-covariate}
+<!-- tbl-baseline: new main Table 2 (reviewers R1.2, R2.2), added 2026-10-07. It merges the
+     submitted supptbl-covariate and supptbl-baseline (Tables S1-S2), whose stubs were removed, so
+     submitted Tables S3-S10 are now S1-S8. -->
 
-![](/ms/fig_tbl/placeholder.png){#supptbl-baseline}
+![](/ms/fig_tbl/placeholder.png){#tbl-baseline}
 
 ![](/ms/fig_tbl/placeholder.png){#supptbl-exemplar}
 

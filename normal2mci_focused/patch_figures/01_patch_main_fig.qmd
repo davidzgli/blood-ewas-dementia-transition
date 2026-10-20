@@ -95,7 +95,7 @@ fig_normal2mci <-
   (sct_extended_DMP_main$normal2incid_vs_prev + sct_extended_DMP_main$normal2mci_vs_prev) +
   (line_plot_ES_corr_main$normal2mci_vs_prev + line_plot_ES_corr_main$normal2mci_vs_normal2incid) +
   plot_layout(ncol = 1, heights = c(2, 2, 3), guides = "collect", axes = "collect", axis_titles = "collect") +
-  plot_annotation(tag_levels = "a")
+  plot_annotation(tag_levels = "A")
 
 ggsave(here("normal2mci_focused/patch_figures/output/fig_normal2mci.png"),
        fig_normal2mci,

@@ -75,10 +75,16 @@ fig_perm_heatmap <- read_rds(
   here("VAE_UMAP_comb/output/fig_perm_pvalue_heatmap.rds")
 )
 
-fig_perm_heatmap <- fig_perm_heatmap + theme_main_fig() +
+# theme_main_fig() draws legend text with ggtext, whose label grobs report an inflated height
+# inside a colour bar: the bar grew to 18 cm, ran past the 13.2 cm canvas and clipped its title.
+# Plain legend text (replaced, since ggplot2 will not merge element_text into element_markdown)
+# and a 0.8 cm key give a 4 cm bar with the "P value" title above it.
+fig_perm_heatmap <- fig_perm_heatmap +
+  (theme_main_fig() %+replace% theme(legend.text = element_text(size = rel(0.85), colour = "black"))) +
   theme(
     plot.title = element_blank(),
-    plot.subtitle = element_blank()
+    plot.subtitle = element_blank(),
+    legend.key.height = unit(0.8, "cm")
   )
 fig_perm_heatmap <- rescale_layer_params(fig_perm_heatmap, size_scale = 0.6, linewidth_scale = 0.6)
 

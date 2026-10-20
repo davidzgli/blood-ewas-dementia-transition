@@ -79,9 +79,16 @@ render_pdf "ms/fig_tbl/supplementary_figures.qmd"
 render_docx "ms/fig_tbl/supplementary_figures.qmd"
 
 echo ""
-echo "--- Tables ---"
-render_pdf "ms/fig_tbl/tables.qmd"
-render_docx "ms/fig_tbl/tables.qmd"
+echo "--- Supplementary tables ---"
+# Typst only: these stay gtsave() images and are merged into
+# ms/submission/suppl_figures_tables.pdf by ms/post_process_pdf.sh.
+render_pdf "ms/fig_tbl/supplementary_tables.qmd"
+
+echo ""
+echo "--- Table 1 ---"
+# DOCX only: A&D requires the main table in editable text, so it is emitted from
+# the saved gt object by an R chunk, and gt has no Typst writer.
+render_docx "ms/fig_tbl/main_tables.qmd"
 
 echo ""
 

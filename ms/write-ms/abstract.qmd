@@ -2,17 +2,20 @@
 title: "abstract"
 ---
 
+INTRODUCTION: Dementia develops over decades, yet most epigenome-wide studies contrast prevalent cases with controls and cannot establish whether blood methylation alterations precede clinical progression or follow it.
 
+METHODS: We profiled baseline blood DNA methylation in 2,491 participants of the Age, Gene/Environment Susceptibility-Reykjavik Study (mean age 76 years), followed up to 13.4 years and adjudicated into six clinical stages: stable normal cognition, two mild cognitive impairment (MCI) trajectories, two prospective transitions to dementia, and prevalent dementia. Differentially methylated positions were summarized as latent dimensions with a variational autoencoder (VAE) and UMAP.
 
-Dementia develops over decades but still lacks reliable markers of its onset and progression. DNA methylation reflects the gene regulation that changes with disease; despite numerous epigenome-wide studies, how methylation profiles evolve across the dementia continuum within a single population remains unclear. We profiled baseline blood methylation in 2,491 participants of the Age, Gene/Environment Susceptibility-Reykjavik Study (AGES-Reykjavik), followed up to 13.4 years and categorized into six clinically defined stages: stable normal cognition, two mild cognitive impairment (MCI) trajectories, two prospective transitions to dementia, and prevalent dementia. Relative to stable normal cognition, 403 CpG sites reached genome-wide significance in at least one stage, and dimensionality reduction recovered a continuous epigenetic trajectory paralleling clinical progression. Among participants cognitively normal at baseline, those who later developed dementia already carried dementia-concordant methylation, whereas those who progressed only to MCI carried the opposite. The same dimensions, learned without genotype data, ordered APOE risk groups in that direction, and effect sizes were concordant with independent Alzheimer's disease cohorts. Gene ontology showed stage-specific biology: synaptic, extracellular matrix and immune processes at the earliest transition, hypoxia response in stable MCI, and cell-cycle regulation in prevalent dementia. Blood methylation therefore resolves trajectory-specific change years before diagnosis, with early and late stages engaging distinct biology relevant to stage-appropriate risk stratification.
+RESULTS: Among participants who were cognitively normal at baseline, methylation had already diverged in opposite directions: profiles were concordant with prevalent dementia in those who later developed dementia (*r* = 0.87) but inverted in those who progressed only to MCI (no further deterioration throughout the follow-up, *r* = [−0.48]{.rev}). 403 CpG sites reached genome-wide significance in at least one stage. Both VAE and UMAP recovered a continuous latent trajectory tracking clinical [progression]{.rev}, and ordered *APOE* genotypes by risk role without genotype data. Effect sizes were concordant with independent Alzheimer's disease cohorts. Enrichment was stage-specific: synaptic, extracellular matrix and immune processes at the earliest transition, hypoxia response in stable MCI, and cell-cycle regulation in prevalent dementia.
 
+DISCUSSION: Blood methylation [differed among the groups]{.rev} years before diagnosis. Rather than a single intermediate state between normal cognition and dementia, MCI comprised courses running in opposite directions, and early and late stages [were enriched for different biological processes]{.rev}.
 
 ## Keywords
 
 - Dementia
 - Cognitive trajectories
 - Longitudinal study
-- Early detection
+- [Mild cognitive impairment]{.rev}
 - DNA methylation
 - Epigenome-wide association study
 - Epigenetic signatures

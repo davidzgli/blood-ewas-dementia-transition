@@ -1,0 +1,792 @@
+---
+title: "Follow-up Timeline"
+subtitle: "Timing of cognitive assessments and dementia surveillance by transition group (Figure S1, reviewer R1.3)"
+---
+
+```{r}
+#| label: load-packages
+#| echo: false
+
+pacman::p_load(haven, patchwork, ggtext, gt, install = FALSE)
+source(here("custom_func/theme_main_fig.R"))
+```
+
+## Overview
+
+Reviewer R1.3 asked for a diagram of when cognitive status was assessed: dementia was captured over a mean of 8.8 years (maximum 13.4), whereas MCI was assessed only at baseline and about 5 years later. This notebook computes the timing numbers for the 2,491 analyzed participants, draws the new Supplementary Figure S1 and drafts its legend.
+
+Outputs (all in `demographics/output/`, prefix `followup_timeline_`):
+
+- `followup_timeline_group_numbers.rds`: per-group n, AGES-II attendance and status, follow-up time and dementia-surveillance time;
+- `followup_timeline_subcategories.rds`: AGES-II subcategories and dementia ascertainment sources;
+- `followup_timeline_calendar.rds`: study calendar and overall follow-up;
+- `followup_timeline_figure.rds` and `followup_timeline_figure.png`: Figure S1 (180 mm wide, 600 dpi).
+
+## Load data
+
+The analyzed sample, the dementia categories and the AGES-I/AGES-II visit records come from three files. They are joined on the subject ID, case-insensitively.
+
+### Analyzed participants
+
+The 2,496 participants in the EWAS input file. The 5 with missing smoking status are dropped later, after the submitted Table 1 has been reproduced on all 2,496.
+
+```{r}
+#| label: read-analyzed
+
+analyzed <-
+  read_rds(here("data/collaborator_only/covariates_and_meth_DMP_on_chr21.rds")) |>
+  dplyr::select(subr_id18, a1smokingstatus, dementia_ages1_eos) |>
+  mutate(subr_id18 = tolower(as.character(subr_id18)))
+
+glimpse(analyzed)
+```
+
+### Dementia categories
+
+The collaborator's dementia-category file. `time_in_days` is the time from the AGES-I visit to incident dementia, death or censoring, and is 0 for prevalent dementia.
+
+```{r}
+#| label: read-dementia-cat
+
+dem_cat <-
+  read_rds(here("data/collaborator_only/covariate_dementia_cat.rds")) |>
+  dplyr::select(subr_id18, demcat, time_in_days, in_ages2) |>
+  mutate(subr_id18 = tolower(as.character(subr_id18)))
+
+glimpse(dem_cat)
+```
+
+### AGES-I and AGES-II visit records
+
+The AGES-I visit date, the AGES-I to AGES-II interval, the AGES-II cognitive status and the source of each dementia diagnosis. `A2COGSTATNEW` is coded 0 normal, 1 MCI, 2 demented, 3 missing classification, 4 not in AGES-II and 5 demented without subtype.
+
+```{r}
+#| label: read-visits
+
+visits <-
+  read_sas(here("data/collaborator_only/rai_a1a2cogstat2016_jan2017_reva.sas7bdat")) |>
+  transmute(
+    subr_id18 = tolower(SUBR_ID18),
+    date_ages1 = BOOKDATE_IC,
+    days_ages1_to_ages2 = DAYS_AGES_AGESII,
+    status_ages2 = as.numeric(A2COGSTATNEW),
+    in_ages2_visits = as.numeric(in_ages2),
+    date_end_surveillance = most_recent_fup_date,
+    days_to_death = DAYS_AGES_IC_TO_DEATH,
+    dementia_source,
+    dementia_rai_source
+  )
+
+glimpse(visits)
+```
+
+### Merge
+
+The six groups carry the collaborator's numeric codes (`AGES_DEMENTIA`), which the follow-up rule below refers to. Every participant must match a visit record, and the two group labels and two AGES-II flags must agree.
+
+```{r}
+#| label: merge
+
+group_codes <- tibble(
+  group = c("stable_normal", "normal2mci", "normal2incid", "stable_mci", "mci2incid", "prev"),
+  ages_dementia = c(0, 1, 2, 4, 5, 6)
+)
+
+timeline_2496 <-
+  analyzed |>
+  inner_join(dem_cat, by = "subr_id18") |>
+  left_join(visits, by = "subr_id18") |>
+  mutate(group = as.character(dementia_ages1_eos)) |>
+  left_join(group_codes, by = "group") |>
+  mutate(
+    date_ages2 = date_ages1 + days_ages1_to_ages2,
+    date_end = date_ages1 + time_in_days
+  )
+
+stopifnot(
+  nrow(timeline_2496) == 2496,
+  !anyNA(timeline_2496$date_ages1),
+  !anyNA(timeline_2496$ages_dementia),
+  all(str_replace(as.character(timeline_2496$demcat), "prev_dementia", "prev") == timeline_2496$group),
+  all(timeline_2496$in_ages2 == timeline_2496$in_ages2_visits),
+  all(!is.na(timeline_2496$days_ages1_to_ages2) == (timeline_2496$in_ages2 == 1))
+)
+
+timeline_2496 |> count(ages_dementia, group)
+```
+
+## Follow-up time definition
+
+The collaborator's follow-up variable (`FU_DAYS` in `AGES_Dementia_Status_Jun2025.sas`) is `time_in_days`, except for normal2mci and stable_mci participants who attended AGES-II, where it is the AGES-I to AGES-II interval. Prevalent dementia therefore has 0.
+
+### Reproduce the submitted Table 1
+
+The submitted Table 1 printed values computed on 2,496 participants. Reproducing them exactly confirms the rule.
+
+```{r}
+#| label: fu-days-2496
+
+days_per_year <- 365.25
+
+timeline_2496 <-
+  timeline_2496 |>
+  mutate(
+    fu_days = if_else(ages_dementia %in% c(1, 4) & in_ages2 == 1, days_ages1_to_ages2, time_in_days)
+  )
+
+table1_submitted <- tribble(
+  ~group, ~fu_days_mean_submitted, ~fu_days_sd_submitted,
+  "stable_normal", 3869, 773,
+  "normal2mci", 1921, 139,
+  "stable_mci", 2104, 1020,
+  "normal2incid", 2730, 905,
+  "mci2incid", 2239, 720,
+  "prev", 0, 0
+)
+
+fu_check_2496 <-
+  timeline_2496 |>
+  summarise(
+    n = n(),
+    fu_days_mean = round(mean(fu_days, na.rm = TRUE)),
+    fu_days_sd = round(sd(fu_days, na.rm = TRUE)),
+    .by = group
+  ) |>
+  left_join(table1_submitted, by = "group")
+
+stopifnot(
+  all(fu_check_2496$fu_days_mean == fu_check_2496$fu_days_mean_submitted),
+  all(fu_check_2496$fu_days_sd == fu_check_2496$fu_days_sd_submitted)
+)
+
+fu_check_2496
+```
+
+### Analyzed sample
+
+Drop the 5 participants with missing smoking status to leave the 2,491 used in every EWAS model.
+
+```{r}
+#| label: analyzed-2491
+
+timeline <- timeline_2496 |> dplyr::filter(!is.na(a1smokingstatus))
+
+stopifnot(nrow(timeline) == 2491)
+```
+
+## Study calendar
+
+The calendar range of each exam, the AGES-I to AGES-II interval, and the end of record-based surveillance.
+
+```{r}
+#| label: calendar
+
+calendar <-
+  timeline |>
+  summarise(
+    n = n(),
+    ages1_first = min(date_ages1, na.rm = TRUE),
+    ages1_median = median(date_ages1, na.rm = TRUE),
+    ages1_last = max(date_ages1, na.rm = TRUE),
+    n_ages2 = sum(in_ages2 == 1, na.rm = TRUE),
+    ages2_first = min(date_ages2, na.rm = TRUE),
+    ages2_median = median(date_ages2, na.rm = TRUE),
+    ages2_last = max(date_ages2, na.rm = TRUE),
+    interval_days_p05 = quantile(days_ages1_to_ages2, 0.05, na.rm = TRUE),
+    interval_days_median = median(days_ages1_to_ages2, na.rm = TRUE),
+    interval_days_p95 = quantile(days_ages1_to_ages2, 0.95, na.rm = TRUE),
+    surveillance_end_first = min(date_end_surveillance, na.rm = TRUE),
+    surveillance_end_last = max(date_end_surveillance, na.rm = TRUE),
+    latest_event = max(date_end, na.rm = TRUE)
+  ) |>
+  mutate(across(starts_with("interval_days"), \(x) x / days_per_year, .names = "{str_replace(.col, 'days', 'years')}"))
+
+stopifnot(
+  calendar$surveillance_end_first == calendar$surveillance_end_last,
+  calendar$latest_event <= calendar$surveillance_end_last
+)
+
+calendar |> pivot_longer(everything(), values_transform = as.character)
+```
+
+AGES-I visits ran from `r calendar$ages1_first` to `r calendar$ages1_last`. The `r scales::comma(calendar$n_ages2)` participants who attended AGES-II were seen from `r calendar$ages2_first` to `r calendar$ages2_last`, a median `r sprintf("%.2f", calendar$interval_years_median)` years later (5th–95th percentiles `r sprintf("%.2f", calendar$interval_years_p05)`–`r sprintf("%.2f", calendar$interval_years_p95)`). Record-based surveillance ended on `r calendar$surveillance_end_last` for every participant; no follow-up ends after that date.
+
+## Per-group numbers
+
+For each group: AGES-II attendance and status, the Table 1 follow-up (`fu_days`), and the dementia-surveillance time (`time_in_days`, to dementia, death or end of surveillance). `end_*` counts how each participant's surveillance ended.
+
+```{r}
+#| label: group-numbers
+
+group_order <- c("stable_normal", "normal2mci", "stable_mci", "normal2incid", "mci2incid", "prev")
+group_names <- c(
+  stable_normal = "Stable normal",
+  normal2mci = "Normal to MCI",
+  stable_mci = "Stable MCI",
+  normal2incid = "Normal to incident dementia",
+  mci2incid = "MCI to incident dementia",
+  prev = "Prevalent dementia"
+)
+
+timeline <-
+  timeline |>
+  mutate(
+    end_reason = case_when(
+      group == "prev" ~ "baseline",
+      group %in% c("normal2incid", "mci2incid") ~ "dementia",
+      date_end == date_end_surveillance ~ "end_of_surveillance",
+      !is.na(days_to_death) & time_in_days == days_to_death ~ "death"
+    )
+  )
+
+stopifnot(!anyNA(timeline$end_reason))
+
+group_numbers <-
+  timeline |>
+  summarise(
+    n = n(),
+    n_ages2 = sum(in_ages2 == 1, na.rm = TRUE),
+    n_ages2_normal = sum(status_ages2 == 0, na.rm = TRUE),
+    n_ages2_mci = sum(status_ages2 == 1, na.rm = TRUE),
+    n_ages2_dementia = sum(status_ages2 %in% c(2, 5), na.rm = TRUE),
+    n_ages2_unclassified = sum(status_ages2 == 3, na.rm = TRUE),
+    n_not_ages2 = sum(in_ages2 == 0, na.rm = TRUE),
+    fu_days_mean = mean(fu_days, na.rm = TRUE),
+    fu_days_sd = sd(fu_days, na.rm = TRUE),
+    surv_days_mean = mean(time_in_days, na.rm = TRUE),
+    surv_days_sd = sd(time_in_days, na.rm = TRUE),
+    surv_days_median = median(time_in_days, na.rm = TRUE),
+    surv_days_max = max(time_in_days, na.rm = TRUE),
+    end_dementia = sum(end_reason == "dementia", na.rm = TRUE),
+    end_death = sum(end_reason == "death", na.rm = TRUE),
+    end_of_surveillance = sum(end_reason == "end_of_surveillance", na.rm = TRUE),
+    n_dx_ages2_exam = sum(dementia_source == "IHA", na.rm = TRUE),
+    n_dx_records = sum(dementia_source %in% c("RAI", "MOR"), na.rm = TRUE),
+    dx_date_p05 = quantile(date_end, 0.05, type = 1, na.rm = TRUE),
+    dx_date_median = quantile(date_end, 0.50, type = 1, na.rm = TRUE),
+    dx_date_p95 = quantile(date_end, 0.95, type = 1, na.rm = TRUE),
+    .by = c(group, ages_dementia)
+  ) |>
+  left_join(table1_submitted, by = "group") |>
+  mutate(
+    group = factor(group, levels = group_order),
+    group_name = group_names[as.character(group)],
+    across(c(fu_days_mean, fu_days_sd, surv_days_mean, surv_days_sd, surv_days_median, surv_days_max),
+           \(x) x / days_per_year, .names = "{str_replace(.col, 'days', 'years')}"),
+    fu_definition = case_when(
+      group == "stable_normal" ~ "to death or end of surveillance",
+      group == "normal2mci" ~ "AGES-I to AGES-II interval",
+      group == "stable_mci" ~ "AGES-I to AGES-II interval if attended, else to death or end of surveillance",
+      group %in% c("normal2incid", "mci2incid") ~ "to dementia diagnosis",
+      group == "prev" ~ "none (dementia at baseline)"
+    ),
+    across(starts_with("dx_date"), \(x) if_else(group %in% c("normal2incid", "mci2incid"), x, as.Date(NA))),
+    across(starts_with("n_dx_"), \(x) if_else(group %in% c("normal2incid", "mci2incid"), x, NA_integer_))
+  ) |>
+  arrange(group) |>
+  relocate(group_name, .after = group)
+
+# The legend says dementia surveillance continued after AGES-II for the normal2mci and
+# stable_mci participants who attended it, although their Table 1 follow-up stops there.
+mci_attenders <- timeline |> dplyr::filter(group %in% c("normal2mci", "stable_mci"), in_ages2 == 1)
+
+stopifnot(
+  sum(group_numbers$n) == 2491,
+  all(mci_attenders$time_in_days > mci_attenders$days_ages1_to_ages2),
+  all(with(group_numbers, n_ages2 + n_not_ages2 == n)),
+  all(with(group_numbers, n_ages2_normal + n_ages2_mci + n_ages2_dementia + n_ages2_unclassified == n_ages2))
+)
+```
+
+The submitted Table 1 printed follow-up computed on 2,496 participants; the analyzed sample is 2,491. The change per group, both in whole days after rounding as Table 1 does and unrounded:
+
+```{r}
+#| label: fu-change
+
+fu_exact_2496 <- timeline_2496 |> summarise(mean_exact_submitted = mean(fu_days, na.rm = TRUE), .by = group)
+
+fu_change <-
+  group_numbers |>
+  transmute(
+    group = as.character(group),
+    mean_submitted = fu_days_mean_submitted,
+    mean_2491 = round(fu_days_mean),
+    mean_change = mean_2491 - mean_submitted,
+    mean_exact_2491 = fu_days_mean,
+    sd_submitted = fu_days_sd_submitted,
+    sd_2491 = round(fu_days_sd),
+    sd_change = sd_2491 - sd_submitted
+  ) |>
+  left_join(fu_exact_2496, by = "group") |>
+  mutate(mean_exact_change = mean_exact_2491 - mean_exact_submitted) |>
+  relocate(mean_exact_submitted, .before = mean_exact_2491)
+
+fu_changed <- fu_change |> dplyr::filter(mean_change != 0 | sd_change != 0)
+
+# The prose below names exactly these two groups and says both means move by less than
+# their rounded values; the unrounded 2,496 means must round to the submitted values.
+stopifnot(
+  setequal(fu_changed$group, c("stable_normal", "normal2incid")),
+  all(round(fu_change$mean_exact_submitted) == fu_change$mean_submitted),
+  all(abs(fu_changed$mean_exact_change) < abs(fu_changed$mean_change))
+)
+
+fu_of <- function(g, col, accuracy = 1) scales::comma(fu_change[[col]][fu_change$group == g], accuracy = accuracy)
+days_text <- function(g, col, accuracy = 1) {
+  x <- fu_change[[col]][fu_change$group == g]
+  glue("{scales::comma(x, accuracy = accuracy)} {if (abs(x) == 1) 'day' else 'days'}")
+}
+
+fu_change
+```
+
+Only two groups change, and both means move by less than their rounded values suggest. stable_normal's rounded mean moves by `r days_text("stable_normal", "mean_change")` (`r fu_of("stable_normal", "mean_submitted")` to `r fu_of("stable_normal", "mean_2491")`; unrounded `r fu_of("stable_normal", "mean_exact_submitted", 0.1)` to `r fu_of("stable_normal", "mean_exact_2491", 0.1)`, a change of `r days_text("stable_normal", "mean_exact_change", 0.1)`) and its SD by `r days_text("stable_normal", "sd_change")` (`r fu_of("stable_normal", "sd_submitted")` to `r fu_of("stable_normal", "sd_2491")`). normal2incid's rounded mean moves by `r days_text("normal2incid", "mean_change")` (`r fu_of("normal2incid", "mean_submitted")` to `r fu_of("normal2incid", "mean_2491")`; unrounded `r fu_of("normal2incid", "mean_exact_submitted", 0.1)` to `r fu_of("normal2incid", "mean_exact_2491", 0.1)`, a change of `r days_text("normal2incid", "mean_exact_change", 0.1)`) and its SD by `r days_text("normal2incid", "sd_change")` (`r fu_of("normal2incid", "sd_submitted")` to `r fu_of("normal2incid", "sd_2491")`). The table below shows the 2,491 values next to the submitted ones.
+
+```{r}
+#| label: group-numbers-table
+
+group_numbers |>
+  dplyr::select(group_name, n, n_ages2, n_ages2_normal, n_ages2_mci, n_ages2_dementia,
+                n_ages2_unclassified, fu_days_mean, fu_days_sd, fu_days_mean_submitted,
+                fu_days_sd_submitted, fu_years_mean, fu_years_sd, surv_years_mean,
+                surv_years_sd, surv_years_max, end_dementia, end_death, end_of_surveillance) |>
+  gt(rowname_col = "group_name") |>
+  fmt_number(columns = c(fu_days_mean, fu_days_sd, fu_days_mean_submitted, fu_days_sd_submitted), decimals = 0) |>
+  fmt_number(columns = ends_with(c("years_mean", "years_sd", "years_max")), decimals = 1) |>
+  tab_spanner("AGES-II status", columns = starts_with("n_ages2_")) |>
+  tab_spanner("Table 1 FU, days (2,491)", columns = c(fu_days_mean, fu_days_sd)) |>
+  tab_spanner("Submitted (2,496)", columns = ends_with("_submitted")) |>
+  tab_spanner("Table 1 FU, years", columns = c(fu_years_mean, fu_years_sd)) |>
+  tab_spanner("Surveillance, years", columns = starts_with("surv_years")) |>
+  tab_spanner("Surveillance ended by", columns = starts_with("end_")) |>
+  cols_label(
+    n_ages2 = "AGES-II", n_ages2_normal = "normal", n_ages2_mci = "MCI",
+    n_ages2_dementia = "dementia", n_ages2_unclassified = "unclassified",
+    fu_days_mean = "mean", fu_days_sd = "SD", fu_days_mean_submitted = "mean",
+    fu_days_sd_submitted = "SD", fu_years_mean = "mean", fu_years_sd = "SD",
+    surv_years_mean = "mean", surv_years_sd = "SD", surv_years_max = "max",
+    end_dementia = "dementia", end_death = "death", end_of_surveillance = "Oct 2015"
+  ) |>
+  tab_options(table.font.size = px(12))
+```
+
+## Overall follow-up
+
+The mean and maximum of the Table 1 follow-up across all 2,491, and the same without the 161 prevalent cases (who contribute 0) and as dementia-surveillance time.
+
+```{r}
+#| label: overall-followup
+
+overall <-
+  timeline |>
+  summarise(
+    fu_years_mean_all = mean(fu_days, na.rm = TRUE) / days_per_year,
+    fu_years_max_all = max(fu_days, na.rm = TRUE) / days_per_year,
+    fu_years_mean_no_prev = mean(fu_days[group != "prev"], na.rm = TRUE) / days_per_year,
+    surv_years_mean_no_prev = mean(time_in_days[group != "prev"], na.rm = TRUE) / days_per_year,
+    surv_years_max = max(time_in_days, na.rm = TRUE) / days_per_year,
+    n_at_risk = sum(group != "prev", na.rm = TRUE)
+  )
+
+calendar <- bind_cols(calendar, overall)
+
+overall
+```
+
+The manuscript's "mean 8.8 years" is the mean Table 1 follow-up over all 2,491 (`r sprintf("%.2f", overall$fu_years_mean_all)` y), which counts the 161 prevalent cases at 0 and the normal2mci and stable_mci AGES-II attenders at their AGES-I to AGES-II interval. Without the prevalent cases the mean is `r sprintf("%.2f", overall$fu_years_mean_no_prev)` y. The mean dementia-surveillance time of the `r scales::comma(overall$n_at_risk)` participants at risk is `r sprintf("%.2f", overall$surv_years_mean_no_prev)` y. The maximum is `r sprintf("%.2f", overall$fu_years_max_all)` y.
+
+## Subcategories
+
+How each incident and MCI group splits by AGES-II attendance and status, and where each incident dementia diagnosis came from: IHA is the AGES-II exam, RAI the nursing-home (NH) or home-care (HC) assessments, and MOR the death certificate.
+
+```{r}
+#| label: subcategories
+
+ages2_split <-
+  timeline |>
+  dplyr::filter(group %in% c("normal2incid", "mci2incid", "stable_mci")) |>
+  mutate(
+    subcategory = case_when(
+      in_ages2 == 0 ~ "did not attend AGES-II",
+      status_ages2 %in% c(2, 5) ~ "dementia diagnosed at AGES-II",
+      status_ages2 == 1 & group == "stable_mci" ~ "MCI at AGES-II",
+      status_ages2 == 1 ~ "MCI at AGES-II, then dementia",
+      status_ages2 == 0 ~ "normal at AGES-II, then dementia",
+      status_ages2 == 3 ~ "attended AGES-II, unclassified, then dementia"
+    )
+  ) |>
+  count(group, subcategory, name = "n") |>
+  mutate(split = "AGES-II attendance and status")
+
+dx_source <-
+  timeline |>
+  dplyr::filter(group %in% c("normal2incid", "mci2incid")) |>
+  mutate(
+    subcategory = case_when(
+      dementia_source == "IHA" ~ "AGES-II exam",
+      dementia_source == "RAI" & dementia_rai_source == "NH" ~ "nursing-home assessment",
+      dementia_source == "RAI" & dementia_rai_source == "HC" ~ "home-care assessment",
+      dementia_source == "MOR" ~ "death certificate"
+    )
+  ) |>
+  count(group, subcategory, name = "n") |>
+  mutate(split = "dementia ascertainment source")
+
+subcategories <-
+  bind_rows(ages2_split, dx_source) |>
+  mutate(group = factor(group, levels = group_order)) |>
+  arrange(split, group, desc(n)) |>
+  relocate(split)
+
+stopifnot(
+  !anyNA(subcategories$subcategory),
+  sum(ages2_split$n) == sum(group_numbers$n[group_numbers$group %in% c("normal2incid", "mci2incid", "stable_mci")]),
+  sum(dx_source$n) == sum(group_numbers$n[group_numbers$group %in% c("normal2incid", "mci2incid")])
+)
+
+subcategories |> gt(groupname_col = "split") |> tab_options(table.font.size = px(12))
+```
+
+Every dementia case diagnosed at AGES-II is also dated on or before the AGES-II visit, so the exam status and the diagnosis date agree.
+
+```{r}
+#| label: check-ages2-dementia
+
+ages2_dementia_check <-
+  timeline |>
+  dplyr::filter(group %in% c("normal2incid", "mci2incid"), in_ages2 == 1) |>
+  count(group, dementia_at_ages2 = status_ages2 == 2, dated_by_ages2 = time_in_days <= days_ages1_to_ages2)
+
+stopifnot(all(with(ages2_dementia_check, dementia_at_ages2 == dated_by_ages2)))
+
+ages2_dementia_check
+```
+
+## Figure S1
+
+Calendar time on the x-axis, the two exam windows shaded, record-based surveillance as a bar, and one row per transition group showing its cognitive status at AGES-I, the AGES-II status that established the group and, for the incident groups, when dementia was diagnosed. A right-hand column gives how many in each group were assigned at AGES-II and how many from records, and how its Table 1 follow-up time is defined.
+
+### Plot data
+
+Positions for every layer: exam windows run from the first to the last visit and status labels sit at the median visit date. Each group shows one AGES-II status, the one that established it (normal for stable_normal, MCI for normal2mci and stable_mci, dementia for the incident groups); the other participants were assigned from records, by the absence of a recorded dementia diagnosis in the stable groups and by a recorded diagnosis in the incident groups. prev_dementia was established at AGES-I, so it has no AGES-II label. Rows with a two-line split in the right-hand column, and the incident rows with their red span of dementia-diagnosis dates (5th–95th percentiles), are taller.
+
+```{r}
+#| label: plot-data
+
+fmt_y <- function(x) sprintf("%.1f", x)
+incident_groups <- c("normal2incid", "mci2incid")
+stable_groups <- c("stable_normal", "stable_mci")
+status_levels <- c("Normal", "MCI", "Dementia")
+status_words <- c(Normal = "normal", MCI = "MCI", Dementia = "dementia")
+defining_status <- c(
+  stable_normal = "Normal", normal2mci = "MCI", stable_mci = "MCI",
+  normal2incid = "Dementia", mci2incid = "Dementia", prev = NA
+)
+row_heights <- c(
+  stable_normal = 1.2, normal2mci = 1, stable_mci = 1.2,
+  normal2incid = 1.3, mci2incid = 1.3, prev = 0.8
+)
+span_offset <- 0.35
+
+# Row labels use the group codes as Table 1 prints them, except that prevalent dementia
+# is spelled out as "prev_dementia" (response-list decision 36); `group` keeps "prev".
+plot_groups <-
+  group_numbers |>
+  mutate(
+    group = as.character(group),
+    group_label = if_else(group == "prev", "prev_dementia", group),
+    row = as.character(glue("{group_label}<br>(n = {scales::comma(n)})")),
+    height = row_heights[group],
+    status_ages2 = defining_status[group],
+    n_from_ages2 = case_when(
+      status_ages2 == "Normal" ~ n_ages2_normal,
+      status_ages2 == "MCI" ~ n_ages2_mci,
+      status_ages2 == "Dementia" ~ n_ages2_dementia
+    ),
+    n_from_records = n - n_from_ages2,
+    from_ages2 = glue("From AGES-II: {scales::comma(n_from_ages2)} {status_words[status_ages2]}"),
+    from_records = case_when(
+      group %in% stable_groups ~ glue("From records: {scales::comma(n_from_records)} dementia-free"),
+      group %in% incident_groups ~ glue("From records: {scales::comma(n_from_records)} dementia")
+    ),
+    fu = glue("{fmt_y(fu_years_mean)} ({fmt_y(fu_years_sd)}) years"),
+    note = case_when(
+      group == "stable_normal" ~ glue("{from_ages2}\n{from_records}\nFollow-up to death or end of surveillance:\n{fu}"),
+      group == "normal2mci" ~ glue("{from_ages2}\nFollow-up from AGES-I to AGES-II:\n{fu}"),
+      group == "stable_mci" ~ glue(
+        "{from_ages2}\n{from_records}\nFollow-up to AGES-II if attended, else to\n",
+        "death or end of surveillance: {fu}"
+      ),
+      group %in% incident_groups ~ glue("{from_ages2}\n{from_records}\nFollow-up to dementia diagnosis:\n{fu}"),
+      group == "prev" ~ glue("No follow-up (dementia at baseline): 0 years")
+    )
+  )
+
+# The two counts must add up to each group. In the incident groups they are the AGES-II and
+# record sources of the dementia diagnosis. The stable groups had no other status at AGES-II,
+# so their records share is everyone not classified there: non-attendees plus attendees
+# without a classification. Every normal2mci participant was classified at AGES-II.
+incident_split <- plot_groups |> dplyr::filter(group %in% incident_groups)
+stable_split <- plot_groups |> dplyr::filter(group %in% stable_groups)
+
+stopifnot(
+  !anyNA(plot_groups$note),
+  all(incident_split$n_from_ages2 == incident_split$n_dx_ages2_exam),
+  all(incident_split$n_from_records == incident_split$n_dx_records),
+  all(stable_split$n_from_records == stable_split$n_not_ages2 + stable_split$n_ages2_unclassified),
+  plot_groups$n_from_records[plot_groups$group == "normal2mci"] == 0
+)
+
+# Each row has a height and the centres stack from the bottom. The study-design rows are
+# offset by 100 so that none of their y breaks falls inside the groups panel.
+design_rows <- tibble(
+  row = c("AGES-I exam", "AGES-II exam", "Dementia<br>surveillance"),
+  height = 1,
+  section = "Study design"
+)
+
+layout_rows <- function(d, offset) {
+  d |> mutate(top = offset + rev(cumsum(rev(height))), y = top - height / 2, bottom = top - height)
+}
+
+rows <-
+  bind_rows(
+    layout_rows(design_rows, 100),
+    layout_rows(plot_groups |> transmute(row, height, section = "Transition group"), 0)
+  ) |>
+  mutate(section = factor(section, levels = c("Study design", "Transition group")))
+
+add_rows <- function(d) {
+  d |>
+    mutate(
+      row = as.character(row),
+      y = rows$y[match(row, rows$row)],
+      section = rows$section[match(row, rows$row)]
+    )
+}
+
+panel_extents <-
+  rows |>
+  summarise(ymin = min(bottom, na.rm = TRUE), ymax = max(top, na.rm = TRUE), .by = section) |>
+  pivot_longer(c(ymin, ymax), values_to = "y")
+
+exam_windows <- tibble(
+  xmin = c(calendar$ages1_first, calendar$ages2_first),
+  xmax = c(calendar$ages1_last, calendar$ages2_last)
+)
+
+design_bars <-
+  tibble(
+    row = design_rows$row,
+    xmin = c(calendar$ages1_first, calendar$ages2_first, calendar$ages1_first),
+    xmax = c(calendar$ages1_last, calendar$ages2_last, calendar$surveillance_end_last),
+    fill = c("grey78", "grey78", "#F4CBC6"),
+    text_colour = c("black", "black", "#7A1F19"),
+    label = c(
+      glue("{year(calendar$ages1_first)}–{year(calendar$ages1_last)}"),
+      glue("{year(calendar$ages2_first)}–{year(calendar$ages2_last)}"),
+      glue("Record-based surveillance to {format(calendar$surveillance_end_last, '%e %b %Y') |> str_squish()}")
+    )
+  ) |>
+  add_rows()
+
+# The AGES-II status that established each group, one label per row, on the row's line.
+ages2_status <-
+  plot_groups |>
+  dplyr::filter(!is.na(status_ages2)) |>
+  transmute(group, status = status_ages2, n = n_from_ages2)
+
+# The incident-group dementia counts must match the AGES-II split in the subcategories table.
+incident_status_check <-
+  subcategories |>
+  dplyr::filter(split == "AGES-II attendance and status", subcategory == "dementia diagnosed at AGES-II") |>
+  transmute(group = as.character(group), n_sub = n) |>
+  inner_join(ages2_status, by = "group")
+
+stopifnot(
+  setequal(incident_status_check$group, incident_groups),
+  all(incident_status_check$n_sub == incident_status_check$n)
+)
+
+status_labels <-
+  bind_rows(
+    tibble(
+      group = c("stable_normal", "normal2mci", "stable_mci", "normal2incid", "mci2incid", "prev"),
+      status = c("Normal", "Normal", "MCI", "Normal", "MCI", "Dementia"),
+      label = status,
+      x = calendar$ages1_median
+    ),
+    ages2_status |>
+      transmute(group, status, label = glue("{status} ({scales::comma(n)})"), x = calendar$ages2_median)
+  ) |>
+  mutate(
+    row = plot_groups$row[match(group, plot_groups$group)],
+    status = factor(status, levels = status_levels)
+  ) |>
+  add_rows()
+
+surveillance_lines <-
+  plot_groups |>
+  dplyr::filter(group != "prev") |>
+  transmute(row, xmin = calendar$ages1_median, xmax = calendar$surveillance_end_last) |>
+  add_rows()
+
+no_dementia <-
+  plot_groups |>
+  dplyr::filter(group %in% c("stable_normal", "normal2mci", "stable_mci")) |>
+  transmute(row, x = as.Date("2013-03-01"), label = "No dementia recorded") |>
+  add_rows()
+
+dementia_spans <-
+  plot_groups |>
+  dplyr::filter(group %in% incident_groups) |>
+  transmute(row, dx_date_p05, dx_date_median, dx_date_p95) |>
+  add_rows() |>
+  mutate(y = y - span_offset)
+
+notes <-
+  bind_rows(
+    tibble(
+      row = design_rows$row,
+      note = c(
+        glue("Blood draw ({scales::comma(calendar$n)} analyzed); cognition\nclassified as normal, MCI or dementia"),
+        glue(
+          "A median {fmt_y(calendar$interval_years_median)} years after AGES-I; cognition\n",
+          "classified as normal, MCI or dementia"
+        ),
+        "Nursing-home and home-care assessments,\ndeath certificates; dementia only (not MCI)"
+      )
+    ),
+    plot_groups |> transmute(row, note)
+  ) |>
+  add_rows()
+```
+
+### Draw
+
+Two aligned panels joined with patchwork: the timeline and the notes column. Text sizes are set so that nothing prints below 6.5 pt where the figure is shown smallest, in the supplementary PDF.
+
+```{r}
+#| label: draw-figure
+#| fig-width: 7.09
+#| fig-height: 5.31
+
+# The PNG is drawn 180 mm wide, but ms/fig_tbl/supplementary_figures.qmd places every
+# figure at width = 100% of its 6.0 in (152.4 mm) text block, i.e. at 0.847 of its drawn
+# size. Text is sized for that placement, so nothing prints below 6.5 pt there.
+fig_width_mm <- 180
+fig_height_mm <- 135
+placed_width_mm <- 152.4
+min_print_pt <- 6.5
+text_pt <- ceiling(10 * min_print_pt * fig_width_mm / placed_width_mm) / 10
+axis_pt <- text_pt + 0.5
+title_pt <- text_pt + 1
+
+status_fill <- c(Normal = "#DCEAF6", MCI = "#FBE3B8", Dementia = "#F4CBC6")
+status_line <- c(Normal = "#2C6BA0", MCI = "#A86400", Dementia = "#A8312A")
+dementia_colour <- "#A8312A"
+facet_rows <- facet_grid(section ~ ., scales = "free_y", space = "free_y", switch = "y")
+y_rows <- scale_y_continuous(breaks = rows$y, labels = rows$row, expand = expansion(0))
+
+p_timeline <-
+  ggplot(panel_extents, aes(y = y)) +
+  geom_blank() +
+  geom_rect(data = exam_windows, aes(xmin = xmin, xmax = xmax, ymin = -Inf, ymax = Inf),
+            fill = "grey93", inherit.aes = FALSE) +
+  geom_vline(xintercept = calendar$surveillance_end_last, linetype = "22",
+             colour = dementia_colour, linewidth = 0.35) +
+  geom_tile(data = design_bars,
+            aes(x = xmin + (xmax - xmin) / 2, width = as.numeric(xmax - xmin), y = y, fill = I(fill)),
+            height = 0.55) +
+  geom_text(data = design_bars,
+            aes(x = xmin + (xmax - xmin) / 2, y = y, label = label, colour = I(text_colour)),
+            size = text_pt, size.unit = "pt") +
+  geom_segment(data = surveillance_lines, aes(x = xmin, xend = xmax, y = y, yend = y),
+               colour = "grey55", linewidth = 0.35) +
+  geom_segment(data = dementia_spans, aes(x = dx_date_p05, xend = dx_date_p95, y = y, yend = y),
+               colour = dementia_colour, linewidth = 1.3) +
+  geom_point(data = dementia_spans, aes(x = dx_date_median, y = y),
+             shape = 21, fill = "white", colour = dementia_colour, size = 1.3, stroke = 0.6) +
+  geom_text(data = dementia_spans, aes(x = dx_date_p05 - 60, y = y), label = "Dementia diagnoses",
+            hjust = 1, size = text_pt, size.unit = "pt", colour = dementia_colour, fontface = "italic") +
+  geom_text(data = no_dementia, aes(x = x, y = y, label = label),
+            nudge_y = 0.17, vjust = 0, size = text_pt, size.unit = "pt",
+            colour = "grey35", fontface = "italic") +
+  geom_label(data = status_labels,
+             aes(x = x, y = y, label = label, fill = status, colour = status),
+             size = text_pt, size.unit = "pt", linewidth = 0.3,
+             label.padding = unit(1.6, "pt"), label.r = unit(1.5, "pt")) +
+  scale_fill_manual(values = status_fill, guide = "none") +
+  scale_colour_manual(values = status_line, guide = "none") +
+  scale_x_date(
+    limits = as.Date(c("2002-01-01", "2016-01-01")),
+    breaks = seq(as.Date("2002-01-01"), as.Date("2016-01-01"), by = "2 years"),
+    date_labels = "%Y", expand = expansion(0)
+  ) +
+  y_rows +
+  facet_rows +
+  labs(x = "Calendar year", y = NULL) +
+  theme_main_fig(base_size = title_pt) +
+  theme(
+    strip.placement = "outside",
+    strip.background = element_blank(),
+    strip.text.y.left = element_text(size = title_pt, angle = 90, face = "bold"),
+    panel.border = element_blank(),
+    axis.line.y = element_blank(),
+    axis.ticks.y = element_blank(),
+    axis.text.x = ggtext::element_markdown(size = axis_pt, colour = "black"),
+    axis.text.y = ggtext::element_markdown(size = axis_pt, colour = "black", hjust = 1, lineheight = 1.1),
+    panel.spacing.y = unit(3, "mm"),
+    plot.margin = margin(2, 1, 2, 2, "mm")
+  )
+
+p_notes <-
+  ggplot(panel_extents, aes(y = y)) +
+  geom_blank() +
+  geom_text(data = notes, aes(x = 0, y = y, label = note),
+            hjust = 0, size = text_pt, size.unit = "pt", lineheight = 0.95) +
+  scale_x_continuous(limits = c(0, 1), expand = expansion(0)) +
+  y_rows +
+  facet_rows +
+  theme_void(base_size = title_pt) +
+  theme(
+    strip.text = element_blank(),
+    panel.spacing.y = unit(3, "mm"),
+    plot.margin = margin(2, 2, 2, 1, "mm")
+  )
+
+fig_followup_timeline <- p_timeline + p_notes + plot_layout(widths = c(1.6, 1))
+
+fig_followup_timeline
+```
+
+## Save outputs
+
+The per-group numbers, subcategories, calendar, figure object and a 600-dpi PNG at `r fig_width_mm` × `r fig_height_mm` mm.
+
+```{r}
+#| label: save
+
+fs::dir_create(here("demographics/output"))
+
+group_numbers |> write_rds(here("demographics/output/followup_timeline_group_numbers.rds"))
+subcategories |> write_rds(here("demographics/output/followup_timeline_subcategories.rds"))
+calendar |> write_rds(here("demographics/output/followup_timeline_calendar.rds"))
+fig_followup_timeline |> write_rds(here("demographics/output/followup_timeline_figure.rds"))
+
+# grDevices::png (cairo) is the device behind most manuscript figures (Figures 1-4 and 6
+# and most supplementary figures); it draws `sans` as Nimbus Sans, a Helvetica-metric face.
+# Figure 5 and the two pathway supplementary composites use ragg (Noto Sans) instead.
+ggsave(
+  here("demographics/output/followup_timeline_figure.png"),
+  fig_followup_timeline,
+  width = fig_width_mm, height = fig_height_mm, units = "mm", dpi = 600, bg = "white",
+  device = grDevices::png
+)
+```
+
+## Draft legend for Figure S1
+
+The proposed legend, in the format of the other supplementary legends in `ms/fig_tbl/supplementary_figures.qmd` (bold title sentence, then a plain description). In that file the opening label becomes the cross-reference `**[@suppfig-followup-timeline]** |`; the numbers below are inline R from this notebook.
+
+**Figure S1** | **Timing of cognitive assessments and dementia ascertainment in the six transition groups.** Upper panel: the AGES-I baseline examination (`r format(calendar$ages1_first, "%B %Y")` to `r format(calendar$ages1_last, "%B %Y")`), at which blood was drawn for DNA methylation and cognition was classified as normal, mild cognitive impairment (MCI) or dementia; the AGES-II examination (`r format(calendar$ages2_first, "%B %Y")` to `r format(calendar$ages2_last, "%B %Y")`, a median of `r fmt_y(calendar$interval_years_median)` years after AGES-I), attended by `r scales::comma(calendar$n_ages2)` of the `r scales::comma(calendar$n)` participants, at which cognition was classified again; and record-based dementia surveillance (nursing-home and home-care assessments, death certificates), which recorded dementia but not MCI and, for every participant without dementia at AGES-I, continued until dementia, death or `r format(calendar$surveillance_end_last, "%e %B %Y") |> str_squish()` (dashed line). MCI could therefore be identified only at the two examinations, whereas incident dementia was identified at AGES-II or from records. Shaded columns mark the first to last visit of each examination. Lower panel: one row per transition group. Labels give the cognitive status at AGES-I and, with the number of participants, at AGES-II for those whose group was established there. The other participants were assigned at AGES-I (prev_dementia) or from records: by the absence of a recorded dementia diagnosis in stable_normal and stable_mci, and by a recorded diagnosis in normal2incid and mci2incid. Grey lines span the surveillance period (none for prev_dementia); red bars span the 5th to 95th percentiles of the dementia-diagnosis dates (circle, median). The right-hand column gives the numbers assigned at AGES-II and from records, and the follow-up time reported in Table 1, here as mean (SD) in years. That follow-up ends at dementia diagnosis in normal2incid and mci2incid; at death or the end of surveillance in stable_normal; at AGES-II, where MCI was last assessed, in normal2mci and in the stable_mci participants who attended it (at death or the end of surveillance in the others); and it is zero in prev_dementia. Dementia surveillance nevertheless continued after AGES-II for the normal2mci and stable_mci participants who attended it. stable_normal, normal cognition at AGES-I and, if attended, at AGES-II, with no dementia recorded; normal2mci, normal cognition at AGES-I and MCI at AGES-II, with no dementia recorded; stable_mci, MCI at AGES-I and, if attended, at AGES-II, with no dementia recorded; normal2incid and mci2incid, normal cognition or MCI, respectively, at AGES-I followed by incident dementia; prev_dementia, prevalent dementia at AGES-I; n, number of participants; SD, standard deviation; AGES, Age, Gene/Environment Susceptibility-Reykjavik Study.

@@ -48,11 +48,11 @@ Apply publication theme and rescale elements for 6.5" column width.
 ```{r}
 #| label: modify-panels
 
-# Panels a & b: upset plots — use & to propagate theme to internal sub-plots
+# Panels A & b: upset plots — use & to propagate theme to internal sub-plots
 panel_a <- panel_a & theme_main_fig()
 panel_b <- panel_b & theme_main_fig()
 
-# Panel c: function categorization barplot — angled axis labels, blank y title
+# Panel C: function categorization barplot — angled axis labels, blank y title
 panel_c <- panel_c +
   theme_main_fig() +
   theme(
@@ -81,14 +81,14 @@ fig_pathway_analysis <-
   free(panel_b) +
   free(panel_c) +
   plot_layout(design = layout, guides = "auto", axes = "keep", axis_titles = "collect") +
-  plot_annotation(tag_levels = "a")
+  plot_annotation(tag_levels = "A")
 
 fig_pathway_analysis
 ```
 
 ## Save Figure
 
-Save at publication dimensions (600 DPI). Height is 6.75" rather than the former 9": panel d occupied
+Save at publication dimensions (600 DPI). Height is 6.75" rather than the former 9": panel D occupied
 one of the layout's four row-units (c spans two), so dropping it scales the canvas by 3/4 and leaves
 a, b and c at exactly their previous physical size.
 

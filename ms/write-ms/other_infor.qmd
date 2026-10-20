@@ -1,10 +1,14 @@
 ---
-title: "Blood DNA methylation traces an epigenetic trajectory across stages of dementia progression"
+title: "Blood DNA methylation traces an epigenetic trajectory across stages of dementia"
 ---
 
 ## Acknowledgements
 
-The AGES–Reykjavik Study was supported by the Icelandic Heart Association, the Intramural Research Program at the National Institute on Aging (grant numbers N01-AG-12100 and HHSN271201200022C), the Althingi (the Icelandic Parliament), and the Icelandic Centre for Research (RANNIS) (grant number 141101–051). This work was also supported by the National Institutes of Health (grant P30 AG066468, University of Pittsburgh Alzheimer's Disease Research Center). Data processing and analysis utilized the computational resources of the NIH HPC Biowulf cluster (https://hpc.nih.gov). We thank all participants in the AGES–Reykjavik Study for their valuable contributions to this research.
+Data processing and analysis utilized the computational resources of the NIH HPC Biowulf cluster. We thank all participants in the AGES-Reykjavik Study for their valuable contributions to this research.
+
+## Funding
+
+The AGES-Reykjavik Study was supported by the Icelandic Heart Association, the Intramural Research Program at the National Institute on Aging (grant numbers N01-AG-12100 and HHSN271201200022C), the Althingi (the Icelandic Parliament), and the Icelandic Centre for Research (RANNIS) (grant number 141101–051). This work was also supported by the National Institutes of Health (grant P30 AG066468, University of Pittsburgh Alzheimer's Disease Research Center).
 
 ## Author contributions
 
@@ -14,17 +18,21 @@ Z.L. performed the statistical analyses, created the visualizations, and drafted
 
 The authors declare no competing financial or non-financial interests.
 
+## Consent Statement
+
+All [participants]{.rev} provided written informed consent. The AGES-Reykjavik study protocols were approved by the National Bioethics Committee in Iceland (VSN-00-063), the National Institute on Aging Intramural Institutional Review Board, and the Icelandic Data Protection Authority.
+
 ## Data availability
 
-This study used individual-level phenotypic and DNA methylation data from participants in the AGES–Reykjavik Study, with tiered access provided to protect participant privacy. Complete individual-level data and detailed demographic information are restricted to approved collaborators who have executed formal Data Use Agreements with the Principal Investigator and relevant institutional authorities; additional data files requiring controlled access can be obtained upon reasonable request to the corresponding author, subject to appropriate data use agreements and institutional review board approval. Processed summary statistics and derived data files will be made publicly available upon manuscript acceptance in the project's GitHub repository (https://github.com/davidzgli/blood-ewas-dementia-transition)(Private currently), under `data/publicly_available/` and released under a Creative Commons Attribution 4.0 International License. Association data for the Alzheimer's Disease Neuroimaging Initiative (ADNI) and the Australian Imaging, Biomarkers, and Lifestyle (AIBL) studies, along with meta-analysis results, were obtained from the MIAMI-AD database [@RN82]. Association data for the AddNeuroMed cohort were downloaded from the supplementary data of the reference [@RN24].
+This study used individual-level phenotypic and DNA methylation data from participants in the AGES-Reykjavik Study, with tiered access provided to protect participant privacy. Complete individual-level data and detailed demographic information are restricted to approved collaborators who have executed formal Data Use Agreements with the Principal Investigator and relevant institutional authorities; additional data files requiring controlled access can be obtained upon reasonable request to the corresponding author, subject to appropriate data use agreements and institutional review board approval. Processed summary statistics and derived data files [are publicly available in the project's GitHub repository [@RN105]]{.rev}, under `data/publicly_available/` and released under a Creative Commons Attribution 4.0 International License. Association data for the Alzheimer's Disease Neuroimaging Initiative (ADNI) and the Australian Imaging, Biomarkers, and Lifestyle (AIBL) studies, along with meta-analysis results, were obtained from the MIAMI-AD database [@RN82]. Association data for the AddNeuroMed cohort were downloaded from the supplementary data of the reference [@RN24].
 
 ## Code availability
 
-All analysis code is available at https://github.com/davidzgli/blood-ewas-dementia-transition (Private currently, will be made publicly available upon manuscript acceptance). The repository includes documentation, analysis scripts, and visualization code, organized by analysis section to allow researchers to run specific components or the complete pipeline. All analyses are fully reproducible using the provided code and the instructions in the repository README, provided data access is granted (see Data availability). Analyses were performed in R (version 4.5.2), with all analysis documents written in Quarto; the full list of package versions is given in the Methods. The variational autoencoder was implemented in R using keras3 with the TensorFlow backend. The complete pipeline is rebuilt through the orchestration script `manage_project/render_manuscript.sh`.
+All analysis code [is publicly available in the same GitHub repository [@RN105]]{.rev}. The repository includes documentation, analysis scripts, and visualization code, organized by analysis section to allow researchers to run specific components or the complete pipeline. All analyses are fully reproducible using the provided code and the instructions in the repository README, provided data access is granted (see Data availability). Analyses were performed in R (version 4.5.2), with all analysis documents written in Quarto; the full list of package versions is given in the Methods. The variational autoencoder was implemented in R using keras3 with the TensorFlow backend. The complete pipeline is rebuilt through the orchestration script `manage_project/render_manuscript.sh`.
 
 ## Disclosure
 
-Artificial intelligence tools were used to assist with manuscript writing, including grammar and language improvement, and to support coding tasks during the analysis pipeline development. All AI-assisted content was carefully reviewed and validated by the authors.
+Artificial intelligence tools were used to assist with manuscript writing, including grammar and language improvement, and to support coding tasks during the analysis pipeline development. [A large language model also assisted in selecting the keywords that assign Gene Ontology terms to the author-defined functional categories (see Methods).]{.rev} All AI-assisted content was carefully reviewed and validated by the authors.
 
 
 
