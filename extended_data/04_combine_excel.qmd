@@ -36,7 +36,7 @@ input_files <- c(
 
 # Create a new workbook for the combined file
 combined_wb <- wb_workbook() |>
-  wb_set_bookview(window_height = 100000, window_width = 100000)
+  wb_set_bookview(window_height = 100000L, window_width = 100000L)
 
 # Process each input file
 for (file in input_files) {

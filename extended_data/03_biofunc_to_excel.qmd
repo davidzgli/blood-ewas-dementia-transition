@@ -185,7 +185,7 @@ tic("Excel creation")
 
 # Create a workbook
 wb <- wb_workbook() |>
-  wb_set_bookview(window_height = 100000, window_width = 100000)
+  wb_set_bookview(window_height = 100000L, window_width = 100000L)
 
 # Add GO results for top 1000 CG sites
 suppl_data_order <- 7
@@ -200,7 +200,7 @@ top1000_legend <- glue("Data S{suppl_data_order}. Gene Ontology (GO) enrichment 
 - zScore: Statistical measure of enrichment strength (higher absolute values indicate stronger enrichment)
 - pvalue: Raw P value from the Fisher's exact test (lower values indicate stronger statistical significance)
 - p.adjust: P value adjusted for multiple testing using Benjamini-Hochberg method (controls false discovery rate)
-- qvalue: Another type of adjusted P value (similar to p.adjust but more conservative)
+- qvalue: Another type of adjusted P value (similar to p.adjust but less conservative)
 - geneID: List of genes from the input that belong to this GO term (separated by '/')
 - Count: Number of genes from the input list in this GO term
 - transition_specific: significant in only one group ('Yes' or 'No'); 'Removed' for a parent term whose genes are identical to those of a significant child term, which was not counted (the child is named in duplicate_of)
@@ -233,7 +233,7 @@ top2000_legend <- glue("Data S{suppl_data_order}. Gene Ontology (GO) enrichment 
 - zScore: Statistical measure of enrichment strength (higher absolute values indicate stronger enrichment)
 - pvalue: Raw P value from the Fisher's exact test (lower values indicate stronger statistical significance)
 - p.adjust: P value adjusted for multiple testing using Benjamini-Hochberg method (controls false discovery rate)
-- qvalue: Another type of adjusted P value (similar to p.adjust but more conservative)
+- qvalue: Another type of adjusted P value (similar to p.adjust but less conservative)
 - geneID: List of genes from the input that belong to this GO term (separated by '/')
 - Count: Number of genes from the input list in this GO term
 - transition_specific: significant in only one group ('Yes' or 'No'); 'Removed' for a parent term whose genes are identical to those of a significant child term, which was not counted (the child is named in duplicate_of)

@@ -32,7 +32,7 @@ All analysis code [is publicly available in the same GitHub repository [@RN105]]
 
 ## Disclosure
 
-Artificial intelligence tools were used to assist with manuscript writing, including grammar and language improvement, and to support coding tasks during the analysis pipeline development. [A large language model also assisted in selecting the keywords that assign Gene Ontology terms to the author-defined functional categories (see Methods).]{.rev} All AI-assisted content was carefully reviewed and validated by the authors.
+Artificial intelligence tools were used to assist with manuscript writing, including grammar and language improvement, and to support coding tasks during the analysis pipeline development. [A large language model also assisted in selecting the keywords that assign Gene Ontology terms to the functional categories (see Methods).]{.rev} All AI-assisted content was carefully reviewed and validated by the authors.
 
 
 

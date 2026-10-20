@@ -52,7 +52,7 @@ tic("Excel creation")
 
 # Create a workbook
 wb <- wb_workbook() |>
-  wb_set_bookview(window_height = 100000, window_width = 100000)
+  wb_set_bookview(window_height = 100000L, window_width = 100000L)
 
 # Add each demcat's data to a separate sheet
 suppl_data_order <- 2

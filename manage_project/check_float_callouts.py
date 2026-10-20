@@ -18,6 +18,11 @@ Two properties are checked, per counter (fig, tbl, suppfig, supptbl, suppdata):
      and the editorial office reads that as not called out. Range endpoints are
      themselves `@label` references, so they pass; interiors do not.
 
+Hand-typed numbers count as mentions too ("Data S7 and S8", "Figure S12", "Table 2"):
+the editorial office reads the rendered text, where a typed number is a call-out like
+any other. Round 5 of the revision typed "Data S7 and S8" into the Methods, ahead of
+Data S1, and a check of `@label`s alone passed it (found by the 2026-10-20 audit).
+
 Numbering comes from the BLOCK ORDER of ms/fig_tbl/_pseudo_figures.qmd, which is
 what Quarto numbers the assembled manuscript from. The standalone float documents
 are checked against it too, since a drift there makes the deliverables disagree
@@ -53,6 +58,17 @@ DEF_RE = re.compile(r"\{#(fig|tbl|suppfig|supptbl|suppdata)-([A-Za-z0-9_-]+)")
 REF_RE = re.compile(r"@(fig|tbl|suppfig|supptbl|suppdata)-([A-Za-z0-9_-]+)")
 INCLUDE_RE = re.compile(r"\{\{<\s*include\s+([^\s>]+)\s*>\}\}")
 COMMENT_RE = re.compile(r"<!--.*?-->", re.S)
+# Hand-typed numbers, with any further numbers joined by ", ", " and " or an en dash
+# ("Data S7 and S8", "Figures S4–S5"). A cross-reference renders the prefix and leaves
+# "[" after it in the source ("Figure S[-@x]"), so it never matches these.
+TAIL = r"((?:(?:,\s*|\s+and\s+|–)S?\d+(?![\d.]))*)"
+HAND_RE = [
+    ("suppdata", re.compile(r"\bData S(\d+)(?![\d.])" + TAIL)),
+    ("suppfig", re.compile(r"\bFigures? S(\d+)(?![\d.])" + TAIL)),
+    ("supptbl", re.compile(r"\bTables? S(\d+)(?![\d.])" + TAIL)),
+    ("fig", re.compile(r"\bFigures? (\d+)(?![\d.,])" + TAIL)),
+    ("tbl", re.compile(r"\bTables? (\d+)(?![\d.,])" + TAIL)),
+]
 
 
 def definitions(path):
@@ -75,11 +91,13 @@ def prose_files():
     return out
 
 
-def references():
-    """Every cross-reference in the body, in source order, as (kind, label, where).
+def references(label_of):
+    """Every mention in the body, in reading order, as (kind, label, where).
 
-    HTML comments are stripped first: ms/write-ms/*.qmd carry long working-note
-    blocks, and a reference quoted inside one is not a call-out.
+    A mention is a cross-reference or a hand-typed number; `label_of` maps
+    (kind, number) to the label, and a typed number with no float is returned with
+    label None. HTML comments are stripped first: ms/write-ms/*.qmd carry long
+    working-note blocks, and a reference quoted inside one is not a call-out.
     """
     out = []
     for p in prose_files():
@@ -87,8 +105,14 @@ def references():
         # the reported line numbers the ones a person can open in the file.
         text = COMMENT_RE.sub(lambda m: "\n" * m.group(0).count("\n"), p.read_text())
         for i, line in enumerate(text.splitlines(), 1):
-            for kind, label in REF_RE.findall(line):
-                out.append((kind, label, f"{p.name}:{i}"))
+            where = f"{p.name}:{i}"
+            hits = [(m.start(), m.group(1), m.group(2)) for m in REF_RE.finditer(line)]
+            for kind, rx in HAND_RE:
+                for m in rx.finditer(line):
+                    for k, n in enumerate([m.group(1)] + re.findall(r"\d+", m.group(2))):
+                        hits.append((m.start() + k, kind, label_of.get((kind, int(n)))))
+            for _, kind, label in sorted(hits, key=lambda h: h[0]):
+                out.append((kind, label, where))
     return out
 
 
@@ -103,12 +127,16 @@ def main():
         number[(kind, label)] = counters[kind]
         order.setdefault(kind, []).append(label)
 
-    refs = references()
+    label_of = {(kind, n): label for (kind, label), n in number.items()}
+    refs = references(label_of)
     problems = []
 
     # ---- 1. ascending first mention -------------------------------------
     first = {}
     for i, (kind, label, where) in enumerate(refs):
+        if label is None:
+            problems.append(f"{where}: a typed {PREFIX[kind]}number names no float")
+            continue
         if (kind, label) not in number:
             problems.append(f"{where}: @{kind}-{label} has no stub in {PSEUDO}")
             continue
@@ -116,7 +144,7 @@ def main():
 
     high = {}
     for i, (kind, label, where) in enumerate(refs):
-        if (kind, label) not in number or first[(kind, label)][0] != i:
+        if label is None or (kind, label) not in number or first[(kind, label)][0] != i:
             continue                      # unknown label, or not the FIRST mention
         n = number[(kind, label)]
         if n < high.get(kind, 0):

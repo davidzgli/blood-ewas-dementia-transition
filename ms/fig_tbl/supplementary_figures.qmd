@@ -102,7 +102,7 @@ format:
 
 ![](/VAE_UMAP_comb/patch_figures/output/fig_suppl_vae_boxplot_one_dim_threshold7.png){#suppfig-vae-boxplot-one-dim-t7 width="65%"}
 
-**[@suppfig-vae-boxplot-one-dim-t7]** | **Individual VAE dimensions across the dementia progression ordering at threshold *P* < 1.0 [× 10^−7^]{.rev} (949 CpGs).** The two dimensions reaching ANOVA significance (VAE_1, VAE_2) are shown, with boxplots across all six dementia trajectory categories and ANOVA [*P* values]{.rev} per dimension; their values changed monotonically across the ordering. The remaining four dimensions did not reach significance and are not shown.
+**[@suppfig-vae-boxplot-one-dim-t7]** | **Individual VAE dimensions across the dementia progression ordering at threshold *P* < 1.0 [× 10^−7^]{.rev} (949 CpGs).** The two dimensions reaching ANOVA significance (VAE_1, VAE_2) are shown, with boxplots across all six dementia trajectory categories and ANOVA [*P* values]{.rev} per dimension; their values changed [near-monotonically]{.rev} across the ordering. The remaining four dimensions did not reach significance and are not shown.
 
 {{< pagebreak >}}
 
